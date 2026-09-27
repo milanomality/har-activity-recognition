@@ -185,8 +185,12 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                     val s = r.stats
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         StatRow("СКО ускорения", "${formatFloat(s.accMagStd)} м/с²")
-                        StatRow("СКЗ линейного ускорения", "${formatFloat(s.linAccRms)} м/с²")
                         StatRow("Частота главного пика", "${formatFloat(s.dominantFreqHz)} Гц")
+                        // Мощность пика, а не СКЗ линейного ускорения: последнее
+                        // в FeatureExtractor.stats получается вычитанием среднего
+                        // модуля и потому тождественно равно accMagStd — строка
+                        // дублировала бы предыдущую.
+                        StatRow("Мощность главного пика", "${formatFloat(s.dominantPower, 3)} м/с²")
                         StatRow("Спектральная энтропия", formatFloat(s.spectralEntropy))
                         StatRow("Среднее вращение", "${formatFloat(s.gyroMagMean)} рад/с")
                         StatRow("Наклон телефона", "${formatFloat(s.tiltDeg, 0)}°")
