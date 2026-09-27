@@ -1,0 +1,21 @@
+# Android / Gradle
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Данные и артефакты обучения
+ml/data/
+ml/runs/
