@@ -48,6 +48,10 @@ data class ActivityWindowEntity(
     @ColumnInfo(name = "dominant_freq_hz") val dominantFreqHz: Float,
     @ColumnInfo(name = "spectral_entropy") val spectralEntropy: Float,
     @ColumnInfo(name = "tilt_deg") val tiltDeg: Float,
+    /** Горизонтальная скорость по инерциальной навигации, м/с (с версии БД 2). */
+    @ColumnInfo(name = "speed_ms", defaultValue = "0") val speedMs: Float = 0f,
+    /** Была ли скорость надёжной — недавно был ZUPT (с версии БД 2). */
+    @ColumnInfo(name = "speed_reliable", defaultValue = "0") val speedReliable: Boolean = false,
 )
 
 /**

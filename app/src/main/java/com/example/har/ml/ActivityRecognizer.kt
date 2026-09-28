@@ -115,7 +115,9 @@ class ActivityRecognizer(context: Context) : Closeable {
     fun recognize(window: SensorWindow): RecognitionResult {
         val stats = FeatureExtractor.stats(window)
 
-        val (rawActivity, activitySource) = predictActivity(window, stats)
+        val (modelActivity, activitySource) = predictActivity(window, stats)
+        // Скорость из инерциальной навигации уточняет решение модели, пока ей можно верить.
+        val rawActivity = SpeedFusion.apply(modelActivity, stats)
         val activityIdx = activitySmoother.update(rawActivity)
         val activity = resolveActivity(activityIdx)
 

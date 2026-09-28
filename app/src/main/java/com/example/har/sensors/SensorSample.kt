@@ -31,6 +31,11 @@ data class SensorFrame(
 
     // Оценка вектора гравитации (ФНЧ по акселерометру), м/с²
     val gravX: Float, val gravY: Float, val gravZ: Float,
+
+    /** Горизонтальная скорость по инерциальной навигации, м/с. Заполняет [com.example.har.service.RecognitionEngine]. */
+    val speedMs: Float = 0f,
+    /** Секунды с последнего обнуления скорости (ZUPT); −1 — скорость не считалась. */
+    val secondsSinceZupt: Float = -1f,
 ) {
     /** Линейное ускорение — акселерометр за вычетом гравитации. */
     val lx: Float get() = ax - gravX

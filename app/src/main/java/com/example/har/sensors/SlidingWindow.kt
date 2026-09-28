@@ -17,6 +17,10 @@ class SensorWindow(
     val proximityNear: BooleanArray,
     val light: FloatArray,
     val gravX: FloatArray, val gravY: FloatArray, val gravZ: FloatArray,
+    /** Горизонтальная скорость по инерциальной навигации, м/с. В модель не подаётся. */
+    val speed: FloatArray = FloatArray(size),
+    /** Секунды с последнего ZUPT; −1 — скорость не считалась. */
+    val secondsSinceZupt: FloatArray = FloatArray(size) { -1f },
 ) {
     /**
      * Канал по имени из `model_meta.json`.
@@ -99,6 +103,7 @@ class SlidingWindowBuffer(
         val magX = FloatArray(n); val magY = FloatArray(n); val magZ = FloatArray(n)
         val prox = FloatArray(n); val near = BooleanArray(n); val lux = FloatArray(n)
         val grX = FloatArray(n); val grY = FloatArray(n); val grZ = FloatArray(n)
+        val speed = FloatArray(n); val sinceZupt = FloatArray(n) { -1f }
 
         for (i in 0 until n) {
             val f = buffer[(writeIndex + i) % n] ?: continue
@@ -107,6 +112,7 @@ class SlidingWindowBuffer(
             magX[i] = f.mx; magY[i] = f.my; magZ[i] = f.mz
             prox[i] = f.proximityCm; near[i] = f.proximityNear; lux[i] = f.lightLux
             grX[i] = f.gravX; grY[i] = f.gravY; grZ[i] = f.gravZ
+            speed[i] = f.speedMs; sinceZupt[i] = f.secondsSinceZupt
         }
 
         val oldest = buffer[writeIndex % n]
@@ -120,6 +126,7 @@ class SlidingWindowBuffer(
             magX = magX, magY = magY, magZ = magZ,
             proximity = prox, proximityNear = near, light = lux,
             gravX = grX, gravY = grY, gravZ = grZ,
+            speed = speed, secondsSinceZupt = sinceZupt,
         )
     }
 }

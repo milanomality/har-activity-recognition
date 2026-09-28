@@ -57,6 +57,8 @@ class LogRepository(context: Context) {
                 dominantFreqHz = s.dominantFreqHz,
                 spectralEntropy = s.spectralEntropy,
                 tiltDeg = s.tiltDeg,
+                speedMs = s.speedMs,
+                speedReliable = s.speedReliable,
             )
         )
 

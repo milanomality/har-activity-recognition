@@ -32,7 +32,7 @@ object CsvExporter {
                 "id,start_time,end_time,start_ms,end_ms,activity,confidence,source," +
                     "placement,placement_confidence,acc_mag_mean,acc_mag_std,lin_acc_rms," +
                     "gyro_mag_mean,gyro_mag_std,mag_mag_mean,light_lux,proximity_near_ratio," +
-                    "dominant_freq_hz,spectral_entropy,tilt_deg,probabilities"
+                    "dominant_freq_hz,spectral_entropy,tilt_deg,speed_ms,speed_reliable,probabilities"
             )
             for (r in rows) {
                 w.append(r.id.toString()).append(',')
@@ -56,6 +56,8 @@ object CsvExporter {
                 w.append(fmt(r.dominantFreqHz)).append(',')
                 w.append(fmt(r.spectralEntropy)).append(',')
                 w.append(fmt(r.tiltDeg)).append(',')
+                w.append(fmt(r.speedMs)).append(',')
+                w.append(if (r.speedReliable) "1" else "0").append(',')
                 // Массив вероятностей содержит запятые — оборачиваем в кавычки.
                 w.append('"').append(r.probabilities).append('"')
                 w.appendLine()

@@ -1,0 +1,247 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "c2af7e340d008be531553559d5a699bd",
+    "entities": [
+      {
+        "tableName": "activity_windows",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `activity` TEXT NOT NULL, `confidence` REAL NOT NULL, `probabilities` TEXT NOT NULL, `placement` TEXT NOT NULL, `placementConfidence` REAL NOT NULL, `source` TEXT NOT NULL, `acc_mag_mean` REAL NOT NULL, `acc_mag_std` REAL NOT NULL, `lin_acc_rms` REAL NOT NULL, `gyro_mag_mean` REAL NOT NULL, `gyro_mag_std` REAL NOT NULL, `mag_mag_mean` REAL NOT NULL, `light_lux` REAL NOT NULL, `proximity_near_ratio` REAL NOT NULL, `dominant_freq_hz` REAL NOT NULL, `spectral_entropy` REAL NOT NULL, `tilt_deg` REAL NOT NULL, `speed_ms` REAL NOT NULL DEFAULT 0, `speed_reliable` INTEGER NOT NULL DEFAULT 0)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activity",
+            "columnName": "activity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "probabilities",
+            "columnName": "probabilities",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placement",
+            "columnName": "placement",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placementConfidence",
+            "columnName": "placementConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accMagMean",
+            "columnName": "acc_mag_mean",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accMagStd",
+            "columnName": "acc_mag_std",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linAccRms",
+            "columnName": "lin_acc_rms",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gyroMagMean",
+            "columnName": "gyro_mag_mean",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gyroMagStd",
+            "columnName": "gyro_mag_std",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "magMagMean",
+            "columnName": "mag_mag_mean",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lightLux",
+            "columnName": "light_lux",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "proximityNearRatio",
+            "columnName": "proximity_near_ratio",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dominantFreqHz",
+            "columnName": "dominant_freq_hz",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spectralEntropy",
+            "columnName": "spectral_entropy",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tiltDeg",
+            "columnName": "tilt_deg",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speedMs",
+            "columnName": "speed_ms",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "speedReliable",
+            "columnName": "speed_reliable",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_activity_windows_startMs",
+            "unique": false,
+            "columnNames": [
+              "startMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_activity_windows_startMs` ON `${TABLE_NAME}` (`startMs`)"
+          },
+          {
+            "name": "index_activity_windows_activity",
+            "unique": false,
+            "columnNames": [
+              "activity"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_activity_windows_activity` ON `${TABLE_NAME}` (`activity`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "activity_intervals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `activity` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `windowCount` INTEGER NOT NULL, `confidenceSum` REAL NOT NULL, `placementCounts` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activity",
+            "columnName": "activity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowCount",
+            "columnName": "windowCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidenceSum",
+            "columnName": "confidenceSum",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placementCounts",
+            "columnName": "placementCounts",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_activity_intervals_startMs",
+            "unique": false,
+            "columnNames": [
+              "startMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_activity_intervals_startMs` ON `${TABLE_NAME}` (`startMs`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c2af7e340d008be531553559d5a699bd')"
+    ]
+  }
+}

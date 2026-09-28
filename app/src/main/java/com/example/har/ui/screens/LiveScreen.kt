@@ -195,6 +195,17 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                         StatRow("Среднее вращение", "${formatFloat(s.gyroMagMean)} рад/с")
                         StatRow("Наклон телефона", "${formatFloat(s.tiltDeg, 0)}°")
                         StatRow("Стабильность ориентации", formatFloat(s.orientationStd, 4))
+                        StatRow(
+                            "Скорость (инерц. навигация)",
+                            when {
+                                s.secondsSinceZupt < 0f -> "—"
+                                s.speedReliable -> "${formatFloat(s.speedMs * 3.6f, 1)} км/ч"
+                                // Без остановок ошибка интегрирования растёт без предела:
+                                // показываем число, но честно помечаем, что оно не используется.
+                                else -> "${formatFloat(s.speedMs * 3.6f, 1)} км/ч · ненадёжно, " +
+                                    "${formatFloat(s.secondsSinceZupt, 0)} с без остановки"
+                            },
+                        )
                     }
                 }
             }

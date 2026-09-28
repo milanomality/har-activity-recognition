@@ -1,5 +1,6 @@
 package com.example.har.features
 
+import com.example.har.motion.InertialSpeedEstimator
 import com.example.har.sensors.SensorHub
 import com.example.har.sensors.SensorWindow
 import kotlin.math.acos
@@ -38,7 +39,15 @@ data class WindowStats(
     val orientationStd: Float,
     /** Частота переходов сигнала через среднее — грубая оценка ритмичности. */
     val zeroCrossingRate: Float,
-)
+    /** Средняя горизонтальная скорость за окно по инерциальной навигации, м/с. */
+    val speedMs: Float = 0f,
+    /** Секунды с последнего ZUPT на конце окна; −1 — скорость не считалась. */
+    val secondsSinceZupt: Float = -1f,
+) {
+    /** Можно ли доверять скорости: после ZUPT прошло не слишком много времени. */
+    val speedReliable: Boolean
+        get() = secondsSinceZupt in 0f..InertialSpeedEstimator.MAX_RELIABLE_SECONDS
+}
 
 /**
  * Превращение окна сигналов в то, что потребляют модели.
@@ -224,6 +233,8 @@ object FeatureExtractor {
             tiltDeg = Math.toDegrees(tiltRad.toDouble()).toFloat(),
             orientationStd = gravityDirectionStd(window),
             zeroCrossingRate = crossings.toFloat() / n,
+            speedMs = mean(window.speed),
+            secondsSinceZupt = window.secondsSinceZupt[n - 1],
         )
     }
 

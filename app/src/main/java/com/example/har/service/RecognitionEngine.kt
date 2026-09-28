@@ -7,6 +7,7 @@ import com.example.har.data.LogRepository
 import com.example.har.ml.ActivityRecognizer
 import com.example.har.ml.RecognitionResult
 import com.example.har.ml.RecognizerStatus
+import com.example.har.motion.InertialSpeedEstimator
 import com.example.har.sensors.SensorAvailability
 import com.example.har.sensors.SensorFrame
 import com.example.har.sensors.SensorHub
@@ -95,12 +96,22 @@ class RecognitionEngine(
         // из 128 отсчётов и прогон сети нельзя выполнять на главном потоке.
         job = scope.launch(Dispatchers.Default) {
             val windowBuffer = SlidingWindowBuffer()
+            val speedEstimator = InertialSpeedEstimator()
             var frames = 0L
             var lastLiveFrameMs = 0L
             try {
-                sensorHub.frames().collect { frame ->
+                sensorHub.frames().collect { raw ->
                     frames++
-                    datasetRecorder.write(frame)
+                    // В датасет — сырые показания: скорость производная и пересчитывается.
+                    datasetRecorder.write(raw)
+
+                    // Скорость считается покадрово: интегрирование требует каждого отсчёта,
+                    // окна для него слишком редкие.
+                    val est = speedEstimator.update(raw.ax, raw.ay, raw.az, raw.gx, raw.gy, raw.gz)
+                    val frame = raw.copy(
+                        speedMs = est.horizontalSpeed,
+                        secondsSinceZupt = est.secondsSinceZupt,
+                    )
 
                     // Кадры приходят 50 раз в секунду. Публиковать каждый в
                     // StateFlow нельзя: экран перерисовывался бы 50 раз в секунду
