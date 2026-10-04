@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import shutil
 import tempfile
@@ -34,10 +35,11 @@ import features as feat
 
 # Порядок классов должен совпадать с перечислениями в Kotlin (Labels.kt):
 # приложение сопоставляет выходы модели по именам, но порядок id важен
-# для раскладки вероятностей.
+# для раскладки вероятностей. Транспорта нет: приложение распознаёт
+# активность самого человека, а не способ передвижения.
 ACTIVITY_ORDER = [
     "STILL", "WALKING", "RUNNING",
-    "STAIRS_UP", "STAIRS_DOWN", "VEHICLE", "CYCLING",
+    "STAIRS_UP", "STAIRS_DOWN", "CYCLING",
 ]
 PLACEMENT_ORDER = ["POCKET", "IN_HAND", "AT_EAR", "ON_TABLE"]
 
@@ -211,6 +213,22 @@ def report(y_true: np.ndarray, y_pred: np.ndarray, names: list[str]) -> float:
 def train_activity(data: datasets.Dataset, args) -> tuple[bytes, dict]:
     """Обучает классификатор активности. Возвращает tflite-модель и метаданные."""
     from tensorflow import keras
+
+    # Окна с классами вне ACTIVITY_ORDER (например, транспорт из старых
+    # записей) отбрасываются: модель их выдавать не должна.
+    known = np.isin(data.y_activity, ACTIVITY_ORDER)
+    if not known.all():
+        dropped = sorted(set(data.y_activity[~known]))
+        print(f"Отброшено {int((~known).sum())} окон с классами вне списка: {', '.join(dropped)}")
+        data = dataclasses.replace(
+            data,
+            x=data.x[known],
+            context=data.context[known],
+            y_activity=data.y_activity[known],
+            y_placement=None if data.y_placement is None else data.y_placement[known],
+            subjects=data.subjects[known],
+            groups=None if data.groups is None else data.groups[known],
+        )
 
     present = [a for a in ACTIVITY_ORDER if a in set(data.y_activity)]
     print(f"\nКлассы активности в данных: {', '.join(present)}")

@@ -24,6 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.har.ml.ActivityType
+import com.example.har.ml.MotionFusion
+import com.example.har.ml.PlacementConditioning
+import com.example.har.motion.InertialSpeedEstimator
 import com.example.har.ml.PhonePlacement
 import com.example.har.ui.HarViewModel
 import com.example.har.ui.theme.ActivityPalette
@@ -202,9 +205,107 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                                 s.speedReliable -> "${formatFloat(s.speedMs * 3.6f, 1)} км/ч"
                                 // Без остановок ошибка интегрирования растёт без предела:
                                 // показываем число, но честно помечаем, что оно не используется.
+                                s.rotationSinceZupt > InertialSpeedEstimator.MAX_RELIABLE_ROTATION_RAD ->
+                                    "${formatFloat(s.speedMs * 3.6f, 1)} км/ч · ненадёжно, телефон вращался"
                                 else -> "${formatFloat(s.speedMs * 3.6f, 1)} км/ч · ненадёжно, " +
                                     "${formatFloat(s.secondsSinceZupt, 0)} с без остановки"
                             },
+                        )
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Движение в земных осях") {
+                    val s = r.stats
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!s.motionComputed) {
+                            StatRow("Навигация", "ещё не запущена")
+                        } else {
+                            StatRow("Вертикальное ускорение (СКЗ)", "${formatFloat(s.verticalAccRms)} м/с²")
+                            StatRow("Горизонтальное ускорение (СКЗ)", "${formatFloat(s.horizontalAccRms)} м/с²")
+                            StatRow("Доля вертикали", "${formatFloat(s.verticalShare * 100f, 0)} %")
+                            StatRow("Рывок (СКЗ)", "${formatFloat(s.jerkRms, 1)} м/с³")
+                            StatRow("Размах наклона", "${formatFloat(s.tiltSwingDeg, 0)}°")
+                            StatRow("Поворот корпуса", "${formatFloat(s.yawRateMean)} рад/с")
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Шаги") {
+                    val s = r.stats
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatRow("Шагов в окне", s.stepsInWindow.toString())
+                        StatRow(
+                            "Темп",
+                            if (s.cadenceHz > 0f) "${formatFloat(s.cadenceHz * 60f, 0)} шаг/мин" else "—",
+                        )
+                        StatRow("Регулярность шага", formatFloat(s.stepRegularity))
+                        StatRow("Размах за шаг", "${formatFloat(s.stepAmplitude)} м/с²")
+                        StatRow(
+                            "Скорость по шагам",
+                            if (s.hasGait) "${formatFloat(s.stepSpeedMs * 3.6f, 1)} км/ч" else "—",
+                        )
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Магнитометр") {
+                    val s = r.stats
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (s.magDisturbedRatio < 0f) {
+                            StatRow("Магнитометр", "нет данных")
+                        } else {
+                            StatRow("Модуль поля", "${formatFloat(s.magMagMean, 1)} мкТл")
+                            StatRow("Колебания модуля (СКО)", "${formatFloat(s.magMagStd)} мкТл")
+                            StatRow("Наклонение", "${formatFloat(s.magInclinationDeg, 0)}°")
+                            StatRow("Поле искажено", "${formatFloat(s.magDisturbedRatio * 100f, 0)} % окна")
+                            StatRow("Компас против гироскопа", "${formatFloat(s.magGyroMismatchDeg, 0)}°")
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Активность с учётом положения") {
+                    val l = PlacementConditioning.likelihoods(r.prediction.placementProbabilities)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatRow("Положение (этап 1)", "${r.prediction.placement.emoji} ${r.prediction.placement.title}")
+                        ActivityType.entries.forEach { type ->
+                            StatRow("${type.emoji} ${type.title}", "×${formatFloat(l[type.id], 2)}")
+                        }
+                        Text(
+                            "Сначала определяется положение телефона, затем вероятность каждой " +
+                                "активности умножается на её совместимость с этим положением: " +
+                                "на столе телефон не несут, у уха не бегут, в руке не едут на велосипеде.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Как учтены шаги и темп") {
+                    val f = MotionFusion.factors(r.stats, r.prediction.placementProbabilities)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatRow("Телефон в руке или у уха", "${formatFloat(f.handHeld * 100f, 0)} %")
+                        StatRow("Шаговый ритм", "${formatFloat(f.gait * 100f, 0)} %")
+                        StatRow("Движение рукой без шагов", "${formatFloat(f.handGesture * 100f, 0)} %")
+                        StatRow("Темп мал для бега", "${formatFloat(f.tooSlowForRunning * 100f, 0)} %")
+                        StatRow("Темп велик для ходьбы", "${formatFloat(f.tooFastForWalking * 100f, 0)} %")
+                        StatRow("Неподвижность телефона", "${formatFloat(f.stillness * 100f, 0)} %")
+                        StatRow("Сдвиг к покою (физ. запрет)", "${formatFloat(f.stillOverride * 100f, 0)} %")
+                        Text(
+                            "Движение рукой без шагов ослабляет ходьбу и бег; шаговый ритм ослабляет " +
+                                "покой; темп разводит ходьбу и бег надёжнее амплитуды, " +
+                                "которую в руке раздувает мах. Если телефон неподвижен и шагов нет, " +
+                                "итог сдвигается к покою, как бы ни была уверена модель.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

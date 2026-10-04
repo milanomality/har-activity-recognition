@@ -22,7 +22,6 @@ object HeuristicClassifier {
         ActivityType.STILL,
         ActivityType.WALKING,
         ActivityType.RUNNING,
-        ActivityType.VEHICLE,
         ActivityType.CYCLING,
     )
 
@@ -43,13 +42,6 @@ object HeuristicClassifier {
         scores[ActivityType.RUNNING.id] =
             band(s.dominantFreqHz, 2.2f, 4.5f) *
                 gate(s.linAccRms - 3.5f, 4.0f)
-
-        // Транспорт: вибрация есть, но она непериодична — высокая спектральная
-        // энтропия при низкой мощности главного пика и почти нулевом вращении.
-        scores[ActivityType.VEHICLE.id] =
-            band(s.linAccRms, 0.15f, 2.0f) *
-                gate(s.spectralEntropy - 1.6f, 1.2f) *
-                gate(0.20f - s.gyroMagStd, 0.20f)
 
         // Велосипед: ноги крутят педали примерно 1–1.5 Гц, корпус телефона
         // при этом постоянно слегка качается — заметное вращение.

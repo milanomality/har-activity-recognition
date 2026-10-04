@@ -44,7 +44,6 @@ object ActivityPalette {
     val running = Color(0xFFD64933)
     val stairsUp = Color(0xFF2E5D9F)
     val stairsDown = Color(0xFF7B8CDE)
-    val vehicle = Color(0xFF9C6644)
     val cycling = Color(0xFFCA8A04)
 
     fun forActivity(name: String): Color = when (name) {
@@ -53,7 +52,6 @@ object ActivityPalette {
         "RUNNING" -> running
         "STAIRS_UP" -> stairsUp
         "STAIRS_DOWN" -> stairsDown
-        "VEHICLE" -> vehicle
         "CYCLING" -> cycling
         else -> still
     }

@@ -52,6 +52,30 @@ data class ActivityWindowEntity(
     @ColumnInfo(name = "speed_ms", defaultValue = "0") val speedMs: Float = 0f,
     /** Была ли скорость надёжной — недавно был ZUPT (с версии БД 2). */
     @ColumnInfo(name = "speed_reliable", defaultValue = "0") val speedReliable: Boolean = false,
+    /** СКЗ вертикального ускорения, м/с² (с версии БД 3). */
+    @ColumnInfo(name = "vertical_acc_rms", defaultValue = "0") val verticalAccRms: Float = 0f,
+    /** СКЗ горизонтального ускорения, м/с² (с версии БД 3). */
+    @ColumnInfo(name = "horizontal_acc_rms", defaultValue = "0") val horizontalAccRms: Float = 0f,
+    /** СКЗ рывка, м/с³ (с версии БД 3). */
+    @ColumnInfo(name = "jerk_rms", defaultValue = "0") val jerkRms: Float = 0f,
+    /** Размах наклона телефона за окно, градусы (с версии БД 3). */
+    @ColumnInfo(name = "tilt_swing_deg", defaultValue = "0") val tiltSwingDeg: Float = 0f,
+    /** Средняя угловая скорость вокруг вертикали, рад/с (с версии БД 3). */
+    @ColumnInfo(name = "yaw_rate_mean", defaultValue = "0") val yawRateMean: Float = 0f,
+    /** Шагов в окне (с версии БД 3). */
+    @ColumnInfo(name = "steps", defaultValue = "0") val stepsInWindow: Int = 0,
+    /** Темп шагов, Гц (с версии БД 3). */
+    @ColumnInfo(name = "cadence_hz", defaultValue = "0") val cadenceHz: Float = 0f,
+    /** Скорость по шагам, м/с (с версии БД 3). */
+    @ColumnInfo(name = "step_speed_ms", defaultValue = "0") val stepSpeedMs: Float = 0f,
+    /** Регулярность шага, 0–1 (с версии БД 3). */
+    @ColumnInfo(name = "step_regularity", defaultValue = "0") val stepRegularity: Float = 0f,
+    /** Магнитное наклонение, градусы (с версии БД 3). */
+    @ColumnInfo(name = "mag_inclination_deg", defaultValue = "0") val magInclinationDeg: Float = 0f,
+    /** Доля кадров с искажённым полем; −1 — нет магнитометра (с версии БД 3). */
+    @ColumnInfo(name = "mag_disturbed_ratio", defaultValue = "0") val magDisturbedRatio: Float = 0f,
+    /** Расхождение поворота по компасу и гироскопу, градусы (с версии БД 3). */
+    @ColumnInfo(name = "mag_gyro_mismatch_deg", defaultValue = "0") val magGyroMismatchDeg: Float = 0f,
 )
 
 /**

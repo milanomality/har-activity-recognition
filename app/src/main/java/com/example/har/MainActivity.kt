@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material3.Icon
@@ -47,16 +48,21 @@ import com.example.har.ui.screens.AboutScreen
 import com.example.har.ui.screens.CollectScreen
 import com.example.har.ui.screens.JournalScreen
 import com.example.har.ui.screens.LiveScreen
+import com.example.har.ui.screens.SensorsScreen
 import com.example.har.ui.screens.SpeedScreen
 import com.example.har.ui.theme.ActivityRecognizerTheme
 
-/** Вкладки приложения. */
-private enum class Tab(val title: String, val icon: ImageVector) {
-    LIVE("Сейчас", Icons.AutoMirrored.Filled.DirectionsRun),
-    SPEED("Скорость", Icons.Default.Speed),
-    JOURNAL("Журнал", Icons.AutoMirrored.Filled.ListAlt),
-    COLLECT("Сбор данных", Icons.Default.FiberManualRecord),
-    ABOUT("О модели", Icons.Default.Info),
+/**
+ * Вкладки приложения. Полное название — в заголовке экрана, короткое — в нижней
+ * панели: шесть вкладок на ширине телефона не вмещают двухсловные подписи.
+ */
+private enum class Tab(val title: String, val short: String, val icon: ImageVector) {
+    LIVE("Сейчас", "Сейчас", Icons.AutoMirrored.Filled.DirectionsRun),
+    SPEED("Скорость", "Скорость", Icons.Default.Speed),
+    SENSORS("Датчики", "Датчики", Icons.Default.Sensors),
+    JOURNAL("Журнал", "Журнал", Icons.AutoMirrored.Filled.ListAlt),
+    COLLECT("Сбор данных", "Сбор", Icons.Default.FiberManualRecord),
+    ABOUT("О модели", "Модель", Icons.Default.Info),
 }
 
 class MainActivity : ComponentActivity() {
@@ -146,7 +152,14 @@ private fun HarApp(vm: HarViewModel = viewModel()) {
                         selected = tab == entry,
                         onClick = { tab = entry },
                         icon = { Icon(entry.icon, contentDescription = entry.title) },
-                        label = { Text(entry.title) },
+                        label = {
+                            Text(
+                                entry.short,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
                     )
                 }
             }
@@ -157,6 +170,7 @@ private fun HarApp(vm: HarViewModel = viewModel()) {
             when (tab) {
                 Tab.LIVE -> LiveScreen(vm)
                 Tab.SPEED -> SpeedScreen(vm)
+                Tab.SENSORS -> SensorsScreen(vm)
                 Tab.JOURNAL -> JournalScreen(vm)
                 Tab.COLLECT -> CollectScreen(vm)
                 Tab.ABOUT -> AboutScreen(vm)

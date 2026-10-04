@@ -3,9 +3,11 @@ package com.example.har.features
 import com.example.har.motion.InertialSpeedEstimator
 import com.example.har.sensors.SensorHub
 import com.example.har.sensors.SensorWindow
+import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -43,10 +45,67 @@ data class WindowStats(
     val speedMs: Float = 0f,
     /** Секунды с последнего ZUPT на конце окна; −1 — скорость не считалась. */
     val secondsSinceZupt: Float = -1f,
+    /** Поворот телефона с последнего ZUPT на конце окна, рад. */
+    val rotationSinceZupt: Float = 0f,
+
+    // --- Движение в земных осях (из инерциальной навигации) ---
+    /** СКЗ вертикального ускорения, м/с²: подпрыгивание тела при шаге. */
+    val verticalAccRms: Float = 0f,
+    /** СКЗ горизонтального ускорения, м/с²: разгон, торможение, мах руки. */
+    val horizontalAccRms: Float = 0f,
+    /** Доля вертикали в энергии движения, 0–1: у шага высокая, у транспорта низкая. */
+    val verticalShare: Float = 0f,
+    /** СКЗ рывка (производной модуля ускорения), м/с³: резкость движения. */
+    val jerkRms: Float = 0f,
+    /** Размах наклона телефона за окно, градусы: мах руки или бедра. */
+    val tiltSwingDeg: Float = 0f,
+    /** Средний модуль угловой скорости вокруг вертикали, рад/с: повороты корпуса. */
+    val yawRateMean: Float = 0f,
+
+    // --- Шаги ---
+    /** Шагов в окне. */
+    val stepsInWindow: Int = 0,
+    /** Темп шагов на конце окна, Гц; 0 — ритма нет. */
+    val cadenceHz: Float = 0f,
+    /** Размах вертикального ускорения за шаг, м/с². */
+    val stepAmplitude: Float = 0f,
+    /** Средняя скорость по шагам за окно, м/с (длина шага зависит от положения телефона). */
+    val stepSpeedMs: Float = 0f,
+    /** Регулярность шага: максимум автокорреляции вертикального ускорения, 0–1. */
+    val stepRegularity: Float = 0f,
+
+    // --- Магнитометр ---
+    /** Среднее магнитное наклонение, градусы. */
+    val magInclinationDeg: Float = 0f,
+    /** Доля кадров окна с искажённым полем (металл, ток), 0–1; −1 — магнитометра нет. */
+    val magDisturbedRatio: Float = -1f,
+    /**
+     * Расхождение поворота по компасу и по гироскопу за окно, градусы.
+     * Телефон один, поворот один — если компас «повернулся», а гироскоп нет,
+     * значит изменилось само поле: рядом едет металл или течёт ток.
+     */
+    val magGyroMismatchDeg: Float = 0f,
 ) {
-    /** Можно ли доверять скорости: после ZUPT прошло не слишком много времени. */
+    /** Можно ли доверять скорости: после ZUPT прошло мало времени и телефон мало вращался. */
     val speedReliable: Boolean
-        get() = secondsSinceZupt in 0f..InertialSpeedEstimator.MAX_RELIABLE_SECONDS
+        get() = InertialSpeedEstimator.isReliable(secondsSinceZupt, rotationSinceZupt)
+
+    /** Считались ли в этом окне производные величины движения. */
+    val motionComputed: Boolean get() = secondsSinceZupt >= 0f
+
+    /** Есть ли в окне устойчивый шаговый ритм. */
+    val hasGait: Boolean get() = stepsInWindow >= 2 && cadenceHz > 0f
+
+    /**
+     * Скорость, которой можно пользоваться: по инерциальной навигации, пока
+     * ей можно верить, иначе по шагам, если человек идёт. null — ни то, ни другое.
+     */
+    val effectiveSpeedMs: Float?
+        get() = when {
+            speedReliable -> speedMs
+            hasGait -> stepSpeedMs
+            else -> null
+        }
 }
 
 /**
@@ -81,6 +140,13 @@ object FeatureExtractor {
     /** Полоса частот, в которой лежит человеческая локомоция. */
     private const val MIN_GAIT_HZ = 0.5f
     private const val MAX_GAIT_HZ = 5.0f
+
+    /** Диапазон лагов автокорреляции: от быстрого шага до медленного двойного шага, с. */
+    private const val MIN_STEP_LAG_S = 0.3
+    private const val MAX_STEP_LAG_S = 1.2
+
+    /** Ниже этой дисперсии вертикального ускорения (м²/с⁴) регулярность не считается: там шум. */
+    private const val MIN_REGULARITY_ENERGY = 0.05
 
     /**
      * Вход модели активности: окно из каналов [channelNames], нормированное
@@ -189,7 +255,11 @@ object FeatureExtractor {
                 peakIdx = i
             }
         }
-        val dominantHz = if (peakIdx >= 0) Fft.binToHz(peakIdx, n, SensorHub.SAMPLE_RATE_HZ) else 0f
+        val dominantHz = if (peakIdx >= 0) {
+            Fft.binToHz(peakIdx, n, SensorHub.SAMPLE_RATE_HZ) * refinePeak(spectrum, peakIdx)
+        } else {
+            0f
+        }
 
         // Спектральная энтропия по нормированному спектру мощности в той же полосе.
         var entropy = 0f
@@ -215,6 +285,10 @@ object FeatureExtractor {
 
         val luxValues = window.light.filter { it >= 0f }
 
+        val motion = window.secondsSinceZupt[n - 1] >= 0f
+        val vRms = rms(window.verticalAcc)
+        val hRms = rms(window.horizontalAcc)
+
         return WindowStats(
             accMagMean = accMean,
             accMagStd = std(accMag),
@@ -235,7 +309,126 @@ object FeatureExtractor {
             zeroCrossingRate = crossings.toFloat() / n,
             speedMs = mean(window.speed),
             secondsSinceZupt = window.secondsSinceZupt[n - 1],
+            rotationSinceZupt = window.rotationSinceZupt[n - 1],
+            verticalAccRms = vRms,
+            horizontalAccRms = hRms,
+            verticalShare = if (vRms + hRms > 1e-6f) vRms * vRms / (vRms * vRms + hRms * hRms) else 0f,
+            jerkRms = jerkRms(accMag),
+            tiltSwingDeg = if (motion) window.insTiltDeg.max() - window.insTiltDeg.min() else 0f,
+            yawRateMean = meanAbs(window.yawRate),
+            stepsInWindow = max(window.stepCount[n - 1] - window.stepCount[0], 0),
+            cadenceHz = window.cadenceHz[n - 1],
+            stepAmplitude = window.stepAmplitude[n - 1],
+            stepSpeedMs = mean(window.stepSpeed),
+            stepRegularity = stepRegularity(window.verticalAcc),
+            magInclinationDeg = magInclination(window),
+            magDisturbedRatio = magDisturbedRatio(window),
+            magGyroMismatchDeg = magGyroMismatch(window),
         )
+    }
+
+    /**
+     * Уточнение положения пика между бинами БПФ параболой по трём точкам.
+     * Возвращает множитель к частоте бина.
+     *
+     * Без этого частота шага квантуется с шагом 50/128 = 0.39 Гц: ходьба
+     * в 100 и в 110 шагов в минуту выглядела бы одинаково.
+     */
+    private fun refinePeak(spectrum: FloatArray, idx: Int): Float {
+        if (idx <= 0 || idx >= spectrum.size - 1) return 1f
+        val a = spectrum[idx - 1]
+        val b = spectrum[idx]
+        val c = spectrum[idx + 1]
+        val denom = a - 2 * b + c
+        if (abs(denom) < 1e-9f) return 1f
+        val delta = (0.5f * (a - c) / denom).coerceIn(-0.5f, 0.5f)
+        return (idx + delta) / idx
+    }
+
+    /** СКЗ производной модуля ускорения, м/с³. */
+    private fun jerkRms(accMag: FloatArray): Float {
+        if (accMag.size < 2) return 0f
+        var s = 0.0
+        for (i in 1 until accMag.size) {
+            val d = (accMag[i] - accMag[i - 1]) * SensorHub.SAMPLE_RATE_HZ
+            s += d.toDouble() * d
+        }
+        return sqrt(s / (accMag.size - 1)).toFloat()
+    }
+
+    /**
+     * Регулярность шага по Мое-Нильссену: максимум нормированной автокорреляции
+     * вертикального ускорения на лагах шага или двойного шага (0.3–1.2 с).
+     * У ровной ходьбы около 0.8, у тряски в транспорте и жестов рукой — около
+     * нуля: там нет повторяющегося рисунка.
+     */
+    fun stepRegularity(signal: FloatArray): Float {
+        val n = signal.size
+        val m = mean(signal)
+        var energy = 0.0
+        for (v in signal) energy += (v - m).toDouble() * (v - m)
+        energy /= n
+        if (energy < MIN_REGULARITY_ENERGY) return 0f
+        val minLag = (MIN_STEP_LAG_S * SensorHub.SAMPLE_RATE_HZ).toInt()
+        val maxLag = min((MAX_STEP_LAG_S * SensorHub.SAMPLE_RATE_HZ).toInt(), n - 2)
+        var best = 0.0
+        for (lag in minLag..maxLag) {
+            var s = 0.0
+            for (i in 0 until n - lag) s += (signal[i] - m).toDouble() * (signal[i + lag] - m)
+            // Несмещённая оценка: на больших лагах слагаемых меньше.
+            val r = s / (n - lag) / energy
+            if (r > best) best = r
+        }
+        return best.toFloat().coerceIn(0f, 1f)
+    }
+
+    private fun magInclination(window: SensorWindow): Float {
+        var s = 0.0
+        var count = 0
+        for (i in 0 until window.size) {
+            if (window.magNorm[i] > 0f) {
+                s += window.magInclinationDeg[i]
+                count++
+            }
+        }
+        return if (count > 0) (s / count).toFloat() else 0f
+    }
+
+    private fun magDisturbedRatio(window: SensorWindow): Float {
+        var present = 0
+        var disturbed = 0
+        for (i in 0 until window.size) {
+            if (window.magNorm[i] <= 0f) continue
+            present++
+            if (!window.magTrusted[i]) disturbed++
+        }
+        return if (present > 0) disturbed.toFloat() / present else -1f
+    }
+
+    /**
+     * Поворот по компасу минус поворот по гироскопу за окно, по модулю, градусы.
+     * Курс по компасу растёт по часовой стрелке, угловая скорость вокруг
+     * вертикали положительна против часовой — отсюда знак минус.
+     */
+    private fun magGyroMismatch(window: SensorWindow): Float {
+        val dt = 1.0 / SensorHub.SAMPLE_RATE_HZ
+        var compass = 0.0
+        var gyro = 0.0
+        var pairs = 0
+        for (i in 1 until window.size) {
+            val h0 = window.headingDeg[i - 1]
+            val h1 = window.headingDeg[i]
+            if (h0.isNaN() || h1.isNaN()) continue
+            var d = (h1 - h0).toDouble()
+            if (d > 180) d -= 360
+            if (d < -180) d += 360
+            compass += d
+            gyro += -Math.toDegrees(window.yawRate[i] * dt)
+            pairs++
+        }
+        // Если курс определён меньше чем в половине окна, сравнивать нечего.
+        if (pairs < window.size / 2) return 0f
+        return abs(compass - gyro).toFloat()
     }
 
     /**
@@ -279,6 +472,13 @@ object FeatureExtractor {
             s += d.toDouble() * d
         }
         return sqrt(s / a.size).toFloat()
+    }
+
+    private fun meanAbs(a: FloatArray): Float {
+        if (a.isEmpty()) return 0f
+        var s = 0.0
+        for (v in a) s += abs(v)
+        return (s / a.size).toFloat()
     }
 
     private fun rms(a: FloatArray): Float {

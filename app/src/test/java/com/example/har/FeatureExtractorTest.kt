@@ -50,7 +50,8 @@ class FeatureExtractorTest {
 
         val stats = FeatureExtractor.stats(window)
 
-        assertEquals(stepHz, stats.dominantFreqHz, 0.25f)
+        // Уточнение пика параболой: точнее половины бина (0.2 Гц) в разы.
+        assertEquals(stepHz, stats.dominantFreqHz, 0.05f)
         assertTrue("периодический сигнал должен давать выраженный пик",
             stats.dominantPower > 0.1f)
         assertTrue("СКЗ линейного ускорения должно быть заметным",

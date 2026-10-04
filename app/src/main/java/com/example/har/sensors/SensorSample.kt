@@ -36,6 +36,36 @@ data class SensorFrame(
     val speedMs: Float = 0f,
     /** Секунды с последнего обнуления скорости (ZUPT); −1 — скорость не считалась. */
     val secondsSinceZupt: Float = -1f,
+    /** Поворот телефона с последнего ZUPT, рад: при большом скорость не верна. */
+    val rotationSinceZupt: Float = 0f,
+
+    // Производные величины из InertialSpeedEstimator — движение в земных осях.
+    /** Вертикальное ускорение без гравитации, м/с², вверх — плюс. */
+    val verticalAcc: Float = 0f,
+    /** Модуль горизонтального ускорения, м/с². */
+    val horizontalAcc: Float = 0f,
+    /** Угловая скорость вокруг вертикали Земли, рад/с. */
+    val yawRate: Float = 0f,
+    /** Наклон телефона по оценке ориентации (гироскоп + акселерометр), градусы. */
+    val insTiltDeg: Float = 0f,
+    /** Модуль магнитного поля, мкТл. */
+    val magNorm: Float = 0f,
+    /** Магнитное наклонение, градусы. */
+    val magInclinationDeg: Float = 0f,
+    /** Курс по компасу, градусы; NaN — не определён. */
+    val headingDeg: Float = Float.NaN,
+    /** Магнитное поле не искажено и используется навигацией. */
+    val magTrusted: Boolean = false,
+
+    // Производные величины из StepDetector.
+    /** Шагов с начала сессии. */
+    val stepCount: Int = 0,
+    /** Темп шагов, Гц; 0 — ритма нет. */
+    val cadenceHz: Float = 0f,
+    /** Размах вертикального ускорения за шаг, м/с². */
+    val stepAmplitude: Float = 0f,
+    /** Скорость по шагам с учётом положения телефона, м/с. */
+    val stepSpeedMs: Float = 0f,
 ) {
     /** Линейное ускорение — акселерометр за вычетом гравитации. */
     val lx: Float get() = ax - gravX

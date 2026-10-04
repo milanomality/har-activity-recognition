@@ -32,7 +32,8 @@ object CsvExporter {
                 "id,start_time,end_time,start_ms,end_ms,activity,confidence,source," +
                     "placement,placement_confidence,acc_mag_mean,acc_mag_std,lin_acc_rms," +
                     "gyro_mag_mean,gyro_mag_std,mag_mag_mean,light_lux,proximity_near_ratio," +
-                    "dominant_freq_hz,spectral_entropy,tilt_deg,speed_ms,speed_reliable,probabilities"
+                    "dominant_freq_hz,spectral_entropy,tilt_deg,speed_ms,speed_reliable," +
+                    "vertical_acc_rms,horizontal_acc_rms,jerk_rms,tilt_swing_deg,yaw_rate_mean,steps,cadence_hz,step_speed_ms,step_regularity,mag_inclination_deg,mag_disturbed_ratio,mag_gyro_mismatch_deg,probabilities"
             )
             for (r in rows) {
                 w.append(r.id.toString()).append(',')
@@ -58,6 +59,18 @@ object CsvExporter {
                 w.append(fmt(r.tiltDeg)).append(',')
                 w.append(fmt(r.speedMs)).append(',')
                 w.append(if (r.speedReliable) "1" else "0").append(',')
+                w.append(fmt(r.verticalAccRms)).append(',')
+                w.append(fmt(r.horizontalAccRms)).append(',')
+                w.append(fmt(r.jerkRms)).append(',')
+                w.append(fmt(r.tiltSwingDeg)).append(',')
+                w.append(fmt(r.yawRateMean)).append(',')
+                w.append(r.stepsInWindow.toString()).append(',')
+                w.append(fmt(r.cadenceHz)).append(',')
+                w.append(fmt(r.stepSpeedMs)).append(',')
+                w.append(fmt(r.stepRegularity)).append(',')
+                w.append(fmt(r.magInclinationDeg)).append(',')
+                w.append(fmt(r.magDisturbedRatio)).append(',')
+                w.append(fmt(r.magGyroMismatchDeg)).append(',')
                 // Массив вероятностей содержит запятые — оборачиваем в кавычки.
                 w.append('"').append(r.probabilities).append('"')
                 w.appendLine()

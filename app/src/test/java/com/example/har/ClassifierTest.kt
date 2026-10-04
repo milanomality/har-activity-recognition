@@ -57,20 +57,6 @@ class ClassifierTest {
     }
 
     @Test
-    fun `транспорт распознаётся по непериодичной тряске`() {
-        val (activity, _) = HeuristicClassifier.classifyActivity(
-            stats(
-                linAccRms = 0.6f,
-                gyroMagStd = 0.03f,
-                dominantFreqHz = 3.7f,
-                dominantPower = 0.02f,
-                spectralEntropy = 2.6f,
-            )
-        )
-        assertEquals(ActivityType.VEHICLE, activity)
-    }
-
-    @Test
     fun `распределение эвристики всегда нормировано`() {
         val samples = listOf(
             stats(linAccRms = 0f, gyroMagStd = 0f),

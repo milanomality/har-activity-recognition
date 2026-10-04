@@ -59,6 +59,18 @@ class LogRepository(context: Context) {
                 tiltDeg = s.tiltDeg,
                 speedMs = s.speedMs,
                 speedReliable = s.speedReliable,
+                verticalAccRms = s.verticalAccRms,
+                horizontalAccRms = s.horizontalAccRms,
+                jerkRms = s.jerkRms,
+                tiltSwingDeg = s.tiltSwingDeg,
+                yawRateMean = s.yawRateMean,
+                stepsInWindow = s.stepsInWindow,
+                cadenceHz = s.cadenceHz,
+                stepSpeedMs = s.stepSpeedMs,
+                stepRegularity = s.stepRegularity,
+                magInclinationDeg = s.magInclinationDeg,
+                magDisturbedRatio = s.magDisturbedRatio,
+                magGyroMismatchDeg = s.magGyroMismatchDeg,
             )
         )
 

@@ -46,8 +46,8 @@ ASSETS_DIR = ROOT / "app" / "src" / "main" / "assets"
 BEGIN_MARK = "<!-- STATS:BEGIN -->"
 END_MARK = "<!-- STATS:END -->"
 
-# Порядок как в Labels.kt. VEHICLE отсутствует намеренно: ни в одном
-# доступном источнике нет записей транспорта, и модель этот класс не выдаёт.
+# Порядок как в Labels.kt. Транспорта среди классов нет: приложение
+# распознаёт активность самого человека.
 CLASS_ORDER = ["STILL", "WALKING", "RUNNING", "STAIRS_UP", "STAIRS_DOWN", "CYCLING"]
 CLASS_RU = {
     "STILL": "Покой",
@@ -165,8 +165,13 @@ def motion_stats(x: np.ndarray, channels: list[str], sample_rate: int = D.SAMPLE
     sb, hzb = spec[:, band], hz[band]
 
     k = np.argmax(sb, axis=1)
-    dom_hz = hzb[k]
     dom_pw = sb[np.arange(len(sb)), k]
+    # Уточнение пика параболой, как в FeatureExtractor.refinePeak.
+    band_idx = np.flatnonzero(band)
+    dom_hz = np.array([
+        F.bin_to_hz(band_idx[j], m, sample_rate) * F.refine_peak(spec[i], int(band_idx[j]))
+        for i, j in enumerate(k)
+    ])
 
     # Спектральная энтропия: насколько энергия размазана по полосе.
     # У периодического движения она низкая, у тряски — высокая.
@@ -796,10 +801,8 @@ def section_model(meta: dict | None) -> str:
         f"({', '.join(meta.get('activity_labels', []))}) и получает "
         f"{len(meta.get('channels', []))} "
         f"{plural(len(meta.get('channels', [])), 'канал', 'канала', 'каналов')} движения "
-        f"({', '.join(meta.get('channels', []))}). Класса `VEHICLE`, который есть "
-        "в `Labels.kt`, среди выходов модели нет: записей транспорта нет ни в одном "
-        "доступном источнике, поэтому нейросеть этот класс никогда не предсказывает — "
-        "его отдаёт только эвристический классификатор. Магнитометр в сеть тоже "
+        f"({', '.join(meta.get('channels', []))}). Транспорт исключён из "
+        "классов: приложение распознаёт активность самого человека. Магнитометр в сеть тоже "
         "не подаётся: при склейке источников остаётся пересечение каналов, "
         "а в UCI HAR магнитометра нет."
     )

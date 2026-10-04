@@ -152,6 +152,21 @@ def bin_to_hz(index: int | np.ndarray, n: int, sample_rate: int):
     return index * sample_rate / n
 
 
+def refine_peak(spectrum: np.ndarray, idx: int) -> float:
+    """Множитель к частоте бина по параболе через три точки — зеркало `refinePeak`.
+
+    Без уточнения частота шага квантуется с шагом 50/128 = 0.39 Гц.
+    """
+    if idx <= 0 or idx >= len(spectrum) - 1:
+        return 1.0
+    a, b, c = (float(spectrum[idx - 1]), float(spectrum[idx]), float(spectrum[idx + 1]))
+    denom = a - 2 * b + c
+    if abs(denom) < 1e-9:
+        return 1.0
+    delta = min(max(0.5 * (a - c) / denom, -0.5), 0.5)
+    return (idx + delta) / idx
+
+
 def window_stats(window: dict[str, np.ndarray], sample_rate: int = 50) -> dict[str, float]:
     """Интерпретируемая сводка окна — зеркало `FeatureExtractor.stats` из Kotlin.
 
@@ -184,7 +199,8 @@ def window_stats(window: dict[str, np.ndarray], sample_rate: int = 50) -> dict[s
     if band.any() and spectrum[band].size:
         peak_idx = int(np.argmax(spectrum[band]))
         peak = float(spectrum[band][peak_idx])
-        dominant_hz = float(hz[band][peak_idx])
+        full_idx = int(np.flatnonzero(band)[peak_idx])
+        dominant_hz = float(bin_to_hz(full_idx, n, sample_rate)) * refine_peak(spectrum, full_idx)
         power = spectrum[band] ** 2
         total = float(power.sum())
         if total > 1e-9:

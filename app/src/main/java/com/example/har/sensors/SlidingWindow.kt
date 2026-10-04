@@ -21,6 +21,20 @@ class SensorWindow(
     val speed: FloatArray = FloatArray(size),
     /** Секунды с последнего ZUPT; −1 — скорость не считалась. */
     val secondsSinceZupt: FloatArray = FloatArray(size) { -1f },
+    // Производные покадровые величины (см. поля SensorFrame). В модель не подаются.
+    val rotationSinceZupt: FloatArray = FloatArray(size),
+    val verticalAcc: FloatArray = FloatArray(size),
+    val horizontalAcc: FloatArray = FloatArray(size),
+    val yawRate: FloatArray = FloatArray(size),
+    val insTiltDeg: FloatArray = FloatArray(size),
+    val magNorm: FloatArray = FloatArray(size),
+    val magInclinationDeg: FloatArray = FloatArray(size),
+    val headingDeg: FloatArray = FloatArray(size) { Float.NaN },
+    val magTrusted: BooleanArray = BooleanArray(size),
+    val stepCount: IntArray = IntArray(size),
+    val cadenceHz: FloatArray = FloatArray(size),
+    val stepAmplitude: FloatArray = FloatArray(size),
+    val stepSpeed: FloatArray = FloatArray(size),
 ) {
     /**
      * Канал по имени из `model_meta.json`.
@@ -104,6 +118,12 @@ class SlidingWindowBuffer(
         val prox = FloatArray(n); val near = BooleanArray(n); val lux = FloatArray(n)
         val grX = FloatArray(n); val grY = FloatArray(n); val grZ = FloatArray(n)
         val speed = FloatArray(n); val sinceZupt = FloatArray(n) { -1f }
+        val rotZupt = FloatArray(n)
+        val vert = FloatArray(n); val horiz = FloatArray(n); val yaw = FloatArray(n)
+        val tilt = FloatArray(n); val mNorm = FloatArray(n); val mDip = FloatArray(n)
+        val heading = FloatArray(n) { Float.NaN }; val mTrusted = BooleanArray(n)
+        val steps = IntArray(n); val cadence = FloatArray(n)
+        val stepAmp = FloatArray(n); val stepSpeed = FloatArray(n)
 
         for (i in 0 until n) {
             val f = buffer[(writeIndex + i) % n] ?: continue
@@ -113,6 +133,12 @@ class SlidingWindowBuffer(
             prox[i] = f.proximityCm; near[i] = f.proximityNear; lux[i] = f.lightLux
             grX[i] = f.gravX; grY[i] = f.gravY; grZ[i] = f.gravZ
             speed[i] = f.speedMs; sinceZupt[i] = f.secondsSinceZupt
+            rotZupt[i] = f.rotationSinceZupt
+            vert[i] = f.verticalAcc; horiz[i] = f.horizontalAcc; yaw[i] = f.yawRate
+            tilt[i] = f.insTiltDeg; mNorm[i] = f.magNorm; mDip[i] = f.magInclinationDeg
+            heading[i] = f.headingDeg; mTrusted[i] = f.magTrusted
+            steps[i] = f.stepCount; cadence[i] = f.cadenceHz
+            stepAmp[i] = f.stepAmplitude; stepSpeed[i] = f.stepSpeedMs
         }
 
         val oldest = buffer[writeIndex % n]
@@ -126,7 +152,12 @@ class SlidingWindowBuffer(
             magX = magX, magY = magY, magZ = magZ,
             proximity = prox, proximityNear = near, light = lux,
             gravX = grX, gravY = grY, gravZ = grZ,
-            speed = speed, secondsSinceZupt = sinceZupt,
+            speed = speed, secondsSinceZupt = sinceZupt, rotationSinceZupt = rotZupt,
+            verticalAcc = vert, horizontalAcc = horiz, yawRate = yaw,
+            insTiltDeg = tilt, magNorm = mNorm, magInclinationDeg = mDip,
+            headingDeg = heading, magTrusted = mTrusted,
+            stepCount = steps, cadenceHz = cadence,
+            stepAmplitude = stepAmp, stepSpeed = stepSpeed,
         )
     }
 }

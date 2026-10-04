@@ -8,6 +8,7 @@ import com.example.har.ml.ActivityRecognizer
 import com.example.har.ml.RecognitionResult
 import com.example.har.ml.RecognizerStatus
 import com.example.har.motion.InertialSpeedEstimator
+import com.example.har.motion.StepDetector
 import com.example.har.sensors.SensorAvailability
 import com.example.har.sensors.SensorFrame
 import com.example.har.sensors.SensorHub
@@ -58,6 +59,10 @@ class RecognitionEngine(
     private val _liveFrame = MutableStateFlow<SensorFrame?>(null)
     val liveFrame: StateFlow<SensorFrame?> = _liveFrame.asStateFlow()
 
+    /** Последние [HISTORY_SECONDS] секунд кадров — для графиков датчиков. */
+    private val _history = MutableStateFlow<List<SensorFrame>>(emptyList())
+    val history: StateFlow<List<SensorFrame>> = _history.asStateFlow()
+
     private var recognizer: ActivityRecognizer? = null
     private var job: Job? = null
 
@@ -97,8 +102,12 @@ class RecognitionEngine(
         job = scope.launch(Dispatchers.Default) {
             val windowBuffer = SlidingWindowBuffer()
             val speedEstimator = InertialSpeedEstimator()
+            val stepDetector = StepDetector()
+            val historyBuffer = ArrayDeque<SensorFrame>(HISTORY_FRAMES)
+            _history.value = emptyList()
             var frames = 0L
             var lastLiveFrameMs = 0L
+            var lastHistoryMs = 0L
             try {
                 sensorHub.frames().collect { raw ->
                     frames++
@@ -107,11 +116,33 @@ class RecognitionEngine(
 
                     // Скорость считается покадрово: интегрирование требует каждого отсчёта,
                     // окна для него слишком редкие.
-                    val est = speedEstimator.update(raw.ax, raw.ay, raw.az, raw.gx, raw.gy, raw.gz)
+                    val est = speedEstimator.update(
+                        raw.ax, raw.ay, raw.az, raw.gx, raw.gy, raw.gz, raw.mx, raw.my, raw.mz,
+                    )
+                    // Длина шага зависит от того, где телефон: берём последнее
+                    // решение классификатора положения (оно обновляется раз в окно).
+                    val k = StepDetector.stepLengthK(_latest.value?.prediction?.placementProbabilities)
+                    val step = stepDetector.update(est.verticalAcc, k)
                     val frame = raw.copy(
                         speedMs = est.horizontalSpeed,
                         secondsSinceZupt = est.secondsSinceZupt,
+                        rotationSinceZupt = est.rotationSinceZupt,
+                        verticalAcc = est.verticalAcc,
+                        horizontalAcc = est.horizontalAcc,
+                        yawRate = est.yawRate,
+                        insTiltDeg = est.tiltDeg,
+                        magNorm = est.magNorm,
+                        magInclinationDeg = est.magInclinationDeg,
+                        headingDeg = est.headingDeg,
+                        magTrusted = est.magTrusted,
+                        stepCount = step.stepCount,
+                        cadenceHz = step.cadenceHz,
+                        stepAmplitude = step.stepAmplitude,
+                        stepSpeedMs = step.speedMs,
                     )
+
+                    historyBuffer.addLast(frame)
+                    if (historyBuffer.size > HISTORY_FRAMES) historyBuffer.removeFirst()
 
                     // Кадры приходят 50 раз в секунду. Публиковать каждый в
                     // StateFlow нельзя: экран перерисовывался бы 50 раз в секунду
@@ -120,6 +151,12 @@ class RecognitionEngine(
                     if (now - lastLiveFrameMs >= LIVE_FRAME_INTERVAL_MS) {
                         lastLiveFrameMs = now
                         _liveFrame.value = frame
+                    }
+                    // Графикам нужна плавность, поэтому чаще, чем числам, — но
+                    // всё равно не на каждом кадре: копия буфера стоит памяти.
+                    if (now - lastHistoryMs >= HISTORY_INTERVAL_MS) {
+                        lastHistoryMs = now
+                        _history.value = historyBuffer.toList()
                     }
 
                     val window = windowBuffer.push(frame) ?: return@collect
@@ -164,5 +201,13 @@ class RecognitionEngine(
 
         /** Как часто показания датчиков обновляются на экране (5 раз в секунду). */
         private const val LIVE_FRAME_INTERVAL_MS = 200L
+
+        /** Сколько секунд сигнала показывают графики. */
+        const val HISTORY_SECONDS = 10
+
+        private const val HISTORY_FRAMES = HISTORY_SECONDS * SensorHub.SAMPLE_RATE_HZ
+
+        /** Как часто обновляются графики (10 раз в секунду). */
+        private const val HISTORY_INTERVAL_MS = 100L
     }
 }

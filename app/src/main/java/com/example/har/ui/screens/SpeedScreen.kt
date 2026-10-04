@@ -38,7 +38,7 @@ fun SpeedScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
 
     val f = frame
     val computed = state.running && f != null && f.secondsSinceZupt >= 0f
-    val reliable = computed && f!!.secondsSinceZupt <= InertialSpeedEstimator.MAX_RELIABLE_SECONDS
+    val reliable = computed && InertialSpeedEstimator.isReliable(f!!.secondsSinceZupt, f.rotationSinceZupt)
 
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp),
@@ -63,6 +63,19 @@ fun SpeedScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Вторая оценка — по шагам: не накапливает ошибку и потому полезна
+            // именно тогда, когда навигация уже «ненадёжна» (ходьба с телефоном в кармане).
+            Text(
+                text = if (f.cadenceHz > 0f) {
+                    "По шагам: ${formatFloat(f.stepSpeedMs * 3.6f, 1)} км/ч · " +
+                        "${formatFloat(f.cadenceHz * 60f, 0)} шаг/мин · всего ${f.stepCount}"
+                } else {
+                    "По шагам: нет ритма · всего ${f.stepCount}"
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (!reliable && f.cadenceHz > 0f) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Text(
@@ -73,6 +86,8 @@ fun SpeedScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                 f!!.secondsSinceZupt < 0.5f -> "Телефон неподвижен"
                 // Без остановок ошибка интегрирования растёт: число показываем
                 // бледным, чтобы его не приняли за точное.
+                !reliable && f.rotationSinceZupt > InertialSpeedEstimator.MAX_RELIABLE_ROTATION_RAD ->
+                    "Ненадёжно: телефон сильно вращался (${formatFloat(f.rotationSinceZupt, 0)} рад без остановки)"
                 !reliable -> "Ненадёжно: ${formatFloat(f.secondsSinceZupt, 0)} с без остановки"
                 else -> "С последней остановки ${formatFloat(f.secondsSinceZupt, 0)} с"
             },

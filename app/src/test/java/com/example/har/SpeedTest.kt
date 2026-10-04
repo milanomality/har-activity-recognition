@@ -55,6 +55,26 @@ class SpeedTest {
     }
 
     @Test
+    fun `после сильного вращения скорость ненадёжна`() {
+        val ins = InertialSpeedEstimator(rate)
+        repeat(rate) { ins.update(0f, 0f, g, 0f, 0f, 0f) }
+        // 4 с вращения 2 рад/с (мах рукой) — 8 рад, больше допустимого оборота.
+        var last: InertialSpeedEstimator.Estimate? = null
+        repeat(rate * 4) { last = ins.update(1f, 0f, g, 0f, 0f, 2f) }
+        val e = requireNotNull(last)
+        assertTrue(e.secondsSinceZupt < InertialSpeedEstimator.MAX_RELIABLE_SECONDS)
+        assertFalse("повернулся на ${e.rotationSinceZupt} рад", e.reliable)
+    }
+
+    @Test
+    fun `невозможная скорость почти запрещает класс`() {
+        // 25 км/ч — ходьба и лестница физически невозможны.
+        assertEquals(SpeedFusion.IMPOSSIBLE, SpeedFusion.likelihood(ActivityType.WALKING, 7f), 0f)
+        assertEquals(SpeedFusion.IMPOSSIBLE, SpeedFusion.likelihood(ActivityType.STAIRS_UP, 7f), 0f)
+        assertEquals(1f, SpeedFusion.likelihood(ActivityType.CYCLING, 7f), 0f)
+    }
+
+    @Test
     fun `остановка обнуляет накопленную скорость`() {
         val ins = InertialSpeedEstimator(rate)
         repeat(rate) { ins.update(0f, 0f, g, 0f, 0f, 0f) }
@@ -98,7 +118,8 @@ class SpeedTest {
 
     @Test
     fun `скорость ослабляет класс, но не запрещает его`() {
-        assertEquals(SpeedFusion.FLOOR, SpeedFusion.likelihood(ActivityType.STILL, 5f), 1e-6f)
+        // 11 км/ч — быстро для ходьбы, но не вдвое выше её предела: ослабить, не запретить.
+        assertEquals(SpeedFusion.FLOOR, SpeedFusion.likelihood(ActivityType.WALKING, 3f), 1e-6f)
         assertEquals(1f, SpeedFusion.likelihood(ActivityType.WALKING, 1.4f), 1e-6f)
     }
 

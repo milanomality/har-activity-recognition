@@ -115,15 +115,27 @@ class ActivityRecognizer(context: Context) : Closeable {
     fun recognize(window: SensorWindow): RecognitionResult {
         val stats = FeatureExtractor.stats(window)
 
-        val (modelActivity, activitySource) = predictActivity(window, stats)
-        // Скорость из инерциальной навигации уточняет решение модели, пока ей можно верить.
-        val rawActivity = SpeedFusion.apply(modelActivity, stats)
-        val activityIdx = activitySmoother.update(rawActivity)
-        val activity = resolveActivity(activityIdx)
-
-        val rawPlacement = predictPlacement(window, stats)
+        // Этап 1 — положение. Определяется первым и по признакам, почти не
+        // зависящим от активности: свет, приближение, ориентация, дрожь руки.
+        // От него зависит, как понимать амплитуду движения: мах руки с телефоном
+        // и шаг с телефоном в кармане дают похожие числа, а означают разное.
+        val rawPlacement = PlacementFusion.apply(predictPlacement(window, stats), stats)
         val placementIdx = placementSmoother.update(rawPlacement)
         val placement = resolvePlacement(placementIdx)
+        val placementProbs = placementSmoother.smoothedProbabilities
+
+        // Этап 2 — активность при известном положении. Модель видит признаки
+        // положения через контекстный вход, а затем положение отсекает
+        // несовместимые с ним классы: на столе не ходят, у уха не бегут.
+        val (modelActivity, activitySource) = predictActivity(window, stats)
+        val byPlacement = PlacementConditioning.apply(modelActivity, placementProbs)
+        // Скорость (по навигации или по шагам) уточняет решение...
+        val bySpeed = SpeedFusion.apply(byPlacement, stats)
+        // ...а шаги, положение телефона и магнитное поле отделяют движение тела
+        // от движения телефона в руке.
+        val rawActivity = MotionFusion.apply(bySpeed, stats, placementProbs)
+        val activityIdx = activitySmoother.update(rawActivity)
+        val activity = resolveActivity(activityIdx)
 
         return RecognitionResult(
             startTimeMs = window.startTimeMs,
@@ -134,7 +146,7 @@ class ActivityRecognizer(context: Context) : Closeable {
                 probabilities = activitySmoother.smoothedProbabilities,
                 placement = placement,
                 placementConfidence = placementSmoother.confidenceOf(placementIdx),
-                placementProbabilities = placementSmoother.smoothedProbabilities,
+                placementProbabilities = placementProbs,
                 source = activitySource,
             ),
             stats = stats,

@@ -46,6 +46,7 @@ class HarViewModel(app: Application) : AndroidViewModel(app) {
     val engineState = engine.state
     val latest = engine.latest
     val liveFrame = engine.liveFrame
+    val history = engine.history
 
     /** День, который показывает журнал (начало суток в мс). */
     private val _selectedDay = MutableStateFlow(LogRepository.startOfToday())
