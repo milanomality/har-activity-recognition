@@ -232,6 +232,37 @@ class MotionTest {
     }
 
     @Test
+    fun `в темноте у уха — не карман, отличает поза`() {
+        // Окно с устройства: тёмная комната (0 лк), датчик закрыт, телефон
+        // почти неподвижен у уха, а нейросеть положения отдала карману 0.99.
+        val model = placement(PhonePlacement.POCKET)
+        val dark = stats(accStd = 0.03f, gyro = 0.05f, steps = 0, cadence = 0f, regularity = 0f, lux = 0f, near = 1f)
+        // Экран вертикален, верх выше низа, телефон по диагонали от уха ко рту.
+        val ear = dark.copy(tiltDeg = 88f, gravityXRatio = -0.6f, gravityYRatio = 0.75f, tiltSwingDeg = 3f)
+        val p = com.example.har.ml.PlacementFusion.apply(model, ear)
+        assertTrue("у уха ${p[PhonePlacement.AT_EAR.id]}", p[PhonePlacement.AT_EAR.id] > 0.9f)
+
+        // Отвесный телефон в кармане стоящего человека: оси X нет.
+        val standing = dark.copy(tiltDeg = 90f, gravityXRatio = 0.05f, gravityYRatio = 0.99f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, standing)[PhonePlacement.POCKET.id], 1e-4f)
+        // Плашмя вдоль бедра сидящего.
+        val sitting = dark.copy(tiltDeg = 170f, gravityXRatio = 0.4f, gravityYRatio = 0.1f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, sitting)[PhonePlacement.POCKET.id], 1e-4f)
+        // Раскачивается вместе с ногой при ходьбе.
+        val walking = ear.copy(tiltSwingDeg = 45f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, walking)[PhonePlacement.POCKET.id], 1e-4f)
+    }
+
+    @Test
+    fun `перевёрнутый верхом вниз телефон — не у уха`() {
+        val model = placement(PhonePlacement.AT_EAR)
+        val s = stats(accStd = 0.03f, gyro = 0.05f, steps = 0, cadence = 0f, regularity = 0f, lux = 0f, near = 1f)
+            .copy(tiltDeg = 90f, gravityYRatio = -0.95f)
+        val p = com.example.har.ml.PlacementFusion.apply(model, s)
+        assertEquals(1f, p[PhonePlacement.POCKET.id], 1e-4f)
+    }
+
+    @Test
     fun `свет и открытый датчик — не карман`() {
         // Окно с устройства: энергичный мах, 480 лк, датчик приближения открыт,
         // а нейросеть положения отдала карману 0.98.

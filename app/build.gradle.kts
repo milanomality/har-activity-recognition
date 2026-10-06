@@ -73,6 +73,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.tensorflow.lite)
+    // Google Activity Recognition — только для сверки с собственным распознаванием.
+    implementation(libs.play.services.location)
 
     debugImplementation(libs.androidx.ui.tooling)
 

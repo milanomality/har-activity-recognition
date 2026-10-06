@@ -47,6 +47,11 @@
             android:exported="false"
             android:foregroundServiceType="health" />
 
+        <!-- Решения Google Activity Recognition — для сверки с собственным распознаванием -->
+        <receiver
+            android:name=".google.GoogleActivityReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

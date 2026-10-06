@@ -6,6 +6,7 @@ import com.example.har.data.db.ActivitySummaryRow
 import com.example.har.data.db.ActivityWindowEntity
 import com.example.har.data.db.AppDatabase
 import com.example.har.ml.PhonePlacement
+import com.example.har.ml.PlacementFusion
 import com.example.har.ml.RecognitionResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
@@ -29,6 +30,9 @@ class LogRepository(context: Context) {
     private val intervalDao = db.intervalDao()
     private val writeLock = Mutex()
 
+    private fun toJson(values: FloatArray): String =
+        values.joinToString(",", "[", "]") { String.format(java.util.Locale.US, "%.4f", it) }
+
     /** Записывает результат распознавания в оба уровня журнала. */
     suspend fun record(result: RecognitionResult) = writeLock.withLock {
         val p = result.prediction
@@ -40,9 +44,7 @@ class LogRepository(context: Context) {
                 endMs = result.endTimeMs,
                 activity = p.activity.name,
                 confidence = p.activityConfidence,
-                probabilities = p.probabilities.joinToString(",", "[", "]") {
-                    String.format(java.util.Locale.US, "%.4f", it)
-                },
+                probabilities = toJson(p.probabilities),
                 placement = p.placement.name,
                 placementConfidence = p.placementConfidence,
                 source = p.source.name,
@@ -71,6 +73,21 @@ class LogRepository(context: Context) {
                 magInclinationDeg = s.magInclinationDeg,
                 magDisturbedRatio = s.magDisturbedRatio,
                 magGyroMismatchDeg = s.magGyroMismatchDeg,
+                gravityX = s.gravityXRatio,
+                gravityY = s.gravityYRatio,
+                gravityZ = s.gravityZRatio,
+                orientationStd = s.orientationStd,
+                earPose = PlacementFusion.earPose(s),
+                placementProbabilities = toJson(p.placementProbabilities),
+                modelPlacementProbabilities = toJson(result.modelPlacementProbabilities),
+                modelActivityProbabilities = toJson(result.modelActivityProbabilities),
+                googleActivity = result.google?.type?.name ?: "",
+                googleConfidence = result.google?.confidence ?: -1,
+                googleAgrees = when (result.google?.type?.agreesWith(p.activity)) {
+                    true -> 1
+                    false -> 0
+                    null -> -1
+                },
             )
         )
 

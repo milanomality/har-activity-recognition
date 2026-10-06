@@ -31,6 +31,12 @@ data class RecognitionResult(
     val endTimeMs: Long,
     val prediction: Prediction,
     val stats: WindowStats,
+    /** Выход модели активности (или эвристики) до поправок по положению, скорости и шагам. */
+    val modelActivityProbabilities: FloatArray = FloatArray(0),
+    /** Выход модели положения (или эвристики) до физических поправок и сглаживания. */
+    val modelPlacementProbabilities: FloatArray = FloatArray(0),
+    /** Последнее решение Google Activity Recognition на момент окна — для сверки. */
+    val google: com.example.har.google.GoogleActivity? = null,
 )
 
 /**
@@ -119,7 +125,8 @@ class ActivityRecognizer(context: Context) : Closeable {
         // зависящим от активности: свет, приближение, ориентация, дрожь руки.
         // От него зависит, как понимать амплитуду движения: мах руки с телефоном
         // и шаг с телефоном в кармане дают похожие числа, а означают разное.
-        val rawPlacement = PlacementFusion.apply(predictPlacement(window, stats), stats)
+        val modelPlacement = predictPlacement(window, stats)
+        val rawPlacement = PlacementFusion.apply(modelPlacement, stats)
         val placementIdx = placementSmoother.update(rawPlacement)
         val placement = resolvePlacement(placementIdx)
         val placementProbs = placementSmoother.smoothedProbabilities
@@ -150,6 +157,8 @@ class ActivityRecognizer(context: Context) : Closeable {
                 source = activitySource,
             ),
             stats = stats,
+            modelActivityProbabilities = modelActivity,
+            modelPlacementProbabilities = modelPlacement,
         )
     }
 

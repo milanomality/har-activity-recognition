@@ -33,7 +33,9 @@ object CsvExporter {
                     "placement,placement_confidence,acc_mag_mean,acc_mag_std,lin_acc_rms," +
                     "gyro_mag_mean,gyro_mag_std,mag_mag_mean,light_lux,proximity_near_ratio," +
                     "dominant_freq_hz,spectral_entropy,tilt_deg,speed_ms,speed_reliable," +
-                    "vertical_acc_rms,horizontal_acc_rms,jerk_rms,tilt_swing_deg,yaw_rate_mean,steps,cadence_hz,step_speed_ms,step_regularity,mag_inclination_deg,mag_disturbed_ratio,mag_gyro_mismatch_deg,probabilities"
+                    "vertical_acc_rms,horizontal_acc_rms,jerk_rms,tilt_swing_deg,yaw_rate_mean,steps,cadence_hz,step_speed_ms,step_regularity,mag_inclination_deg,mag_disturbed_ratio,mag_gyro_mismatch_deg," +
+                    "grav_x,grav_y,grav_z,orientation_std,ear_pose,google_activity,google_confidence,google_agrees," +
+                    "probabilities,placement_probabilities,model_placement_probabilities,model_activity_probabilities"
             )
             for (r in rows) {
                 w.append(r.id.toString()).append(',')
@@ -71,8 +73,22 @@ object CsvExporter {
                 w.append(fmt(r.magInclinationDeg)).append(',')
                 w.append(fmt(r.magDisturbedRatio)).append(',')
                 w.append(fmt(r.magGyroMismatchDeg)).append(',')
-                // Массив вероятностей содержит запятые — оборачиваем в кавычки.
-                w.append('"').append(r.probabilities).append('"')
+                w.append(fmt(r.gravityX)).append(',')
+                w.append(fmt(r.gravityY)).append(',')
+                w.append(fmt(r.gravityZ)).append(',')
+                w.append(fmt(r.orientationStd)).append(',')
+                w.append(fmt(r.earPose)).append(',')
+                w.append(r.googleActivity).append(',')
+                w.append(r.googleConfidence.toString()).append(',')
+                w.append(r.googleAgrees.toString()).append(',')
+                // Массивы вероятностей содержат запятые — каждый в кавычках.
+                listOf(
+                    r.probabilities, r.placementProbabilities,
+                    r.modelPlacementProbabilities, r.modelActivityProbabilities,
+                ).forEachIndexed { i, json ->
+                    if (i > 0) w.append(',')
+                    w.append('"').append(json).append('"')
+                }
                 w.appendLine()
             }
         }

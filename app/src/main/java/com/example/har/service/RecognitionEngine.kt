@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.har.collect.DatasetRecorder
 import com.example.har.data.LogRepository
+import com.example.har.google.GoogleActivityTracker
 import com.example.har.ml.ActivityRecognizer
 import com.example.har.ml.RecognitionResult
 import com.example.har.ml.RecognizerStatus
@@ -31,6 +32,10 @@ data class EngineState(
     val status: RecognizerStatus? = null,
     val availability: SensorAvailability? = null,
     val error: String? = null,
+    /** Окон за сессию, где решение Google можно сравнить с нашим. */
+    val googleCompared: Long = 0L,
+    /** Из них совпало с Google. */
+    val googleAgreed: Long = 0L,
 )
 
 /**
@@ -91,6 +96,8 @@ class RecognitionEngine(
                 startedAtMs = System.currentTimeMillis(),
                 framesProcessed = 0,
                 windowsProcessed = 0,
+                googleCompared = 0,
+                googleAgreed = 0,
                 status = r.status,
                 availability = sensorHub.availability,
                 error = null,
@@ -99,6 +106,8 @@ class RecognitionEngine(
 
         // Инференс и запись в БД идут на Dispatchers.Default: БПФ на окне
         // из 128 отсчётов и прогон сети нельзя выполнять на главном потоке.
+        GoogleActivityTracker.start(context)
+
         job = scope.launch(Dispatchers.Default) {
             val windowBuffer = SlidingWindowBuffer()
             val speedEstimator = InertialSpeedEstimator()
@@ -161,14 +170,17 @@ class RecognitionEngine(
 
                     val window = windowBuffer.push(frame) ?: return@collect
 
-                    val result = r.recognize(window)
+                    val result = r.recognize(window).copy(google = GoogleActivityTracker.current())
                     _latest.value = result
                     repository.record(result)
+                    val agrees = result.google?.type?.agreesWith(result.prediction.activity)
                     // Счётчики обновляем раз в окно, а не раз в кадр — по той же причине.
                     _state.update {
                         it.copy(
                             framesProcessed = frames,
                             windowsProcessed = it.windowsProcessed + 1,
+                            googleCompared = it.googleCompared + if (agrees != null) 1 else 0,
+                            googleAgreed = it.googleAgreed + if (agrees == true) 1 else 0,
                         )
                     }
                 }
@@ -182,6 +194,7 @@ class RecognitionEngine(
     }
 
     fun stop() {
+        GoogleActivityTracker.stop(context)
         job?.cancel()
         job = null
         datasetRecorder.stop()

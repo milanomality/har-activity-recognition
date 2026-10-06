@@ -488,6 +488,568 @@ def load_realworld(
 
 
 # --------------------------------------------------------------------------
+# Общая нарезка записей для публичных датасетов
+# --------------------------------------------------------------------------
+
+class _WindowCollector:
+    """Копит окна из непрерывных записей и собирает из них Dataset.
+
+    Каждая запись — один человек, одна активность, одно положение, 50 Гц,
+    единицы и оси Android (ускорение в м/с² вместе с гравитацией, рад/с, мкТл).
+    Окна нарезаются внутри записи и никогда не пересекают её границу.
+    Освещённости и приближения в этих датасетах нет: они обозначаются −1,
+    как это делает SensorHub при отсутствии датчика.
+    """
+
+    def __init__(self, with_mag: bool):
+        self.with_mag = with_mag
+        self.windows: list[dict] = []
+        self.activities: list[str] = []
+        self.placements: list[str] = []
+        self.subjects: list[str] = []
+        self.groups: list[str] = []
+
+    def add(self, acc: np.ndarray, gyro: np.ndarray, mag: np.ndarray | None,
+            activity: str, placement: str, subject: str, group: str) -> None:
+        n = len(acc)
+        if n < WINDOW_SIZE:
+            return
+        grav = estimate_gravity(acc.T).T
+        if mag is None:
+            mag = np.zeros_like(acc)
+        data = {
+            "acc_x": acc[:, 0], "acc_y": acc[:, 1], "acc_z": acc[:, 2],
+            "gyro_x": gyro[:, 0], "gyro_y": gyro[:, 1], "gyro_z": gyro[:, 2],
+            "mag_x": mag[:, 0], "mag_y": mag[:, 1], "mag_z": mag[:, 2],
+            "grav_x": grav[:, 0], "grav_y": grav[:, 1], "grav_z": grav[:, 2],
+            "light_lux": np.full(n, -1.0, dtype=np.float32),
+            "proximity_cm": np.full(n, -1.0, dtype=np.float32),
+            "proximity_near": np.zeros(n, dtype=bool),
+        }
+        data = {k: np.asarray(v, dtype=bool if k == "proximity_near" else np.float32)
+                for k, v in data.items()}
+        for s in range(0, n - WINDOW_SIZE + 1, WINDOW_STRIDE):
+            sl = slice(s, s + WINDOW_SIZE)
+            self.windows.append({k: v[sl] for k, v in data.items()})
+            self.activities.append(activity)
+            self.placements.append(placement)
+            self.subjects.append(subject)
+            self.groups.append(group)
+
+    def build(self) -> Dataset | None:
+        if not self.windows:
+            return None
+        channels = list(ALL_MOTION_CHANNELS) if self.with_mag else ALL_MOTION_CHANNELS[:6]
+        x = np.stack([
+            np.stack([w[ch] for ch in channels], axis=-1) for w in self.windows
+        ]).astype(np.float32)
+        context = np.stack([feat.placement_features(w) for w in self.windows]).astype(np.float32)
+        return Dataset(
+            x=x,
+            context=context,
+            y_activity=np.array(self.activities),
+            y_placement=np.array(self.placements),
+            subjects=np.array(self.subjects),
+            channels=channels,
+            groups=np.array(self.groups),
+        )
+
+
+def _download(url: str, target: Path, retries: int = 3) -> Path | None:
+    """Скачивает файл в target, если его там ещё нет. Повторяет при сбое сети."""
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    import requests
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, retries + 1):
+        try:
+            with requests.get(url, stream=True, timeout=600) as r:
+                r.raise_for_status()
+                tmp = target.with_suffix(target.suffix + ".part")
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+                tmp.replace(target)
+            return target
+        except Exception as exc:  # noqa: BLE001
+            if attempt == retries:
+                print(f"    не скачан {url}: {exc}")
+                return None
+            time.sleep(2 * attempt)
+    return None
+
+
+# --------------------------------------------------------------------------
+# MotionSense (Queen Mary University of London, 2018)
+# --------------------------------------------------------------------------
+
+MOTIONSENSE_URL = (
+    "https://raw.githubusercontent.com/mmalekzadeh/motion-sense/master/data/"
+    "A_DeviceMotion_data.zip"
+)
+
+MOTIONSENSE_ACTIVITY_MAP = {
+    "dws": "STAIRS_DOWN",
+    "ups": "STAIRS_UP",
+    "wlk": "WALKING",
+    "jog": "RUNNING",
+    "sit": "STILL",
+    "std": "STILL",
+}
+
+# Начало и конец каждой записи — телефон кладут в карман и достают.
+MOTIONSENSE_TRIM = 2 * SAMPLE_RATE_HZ
+
+
+def load_motionsense(root: Path) -> Dataset | None:
+    """Загружает MotionSense: 24 человека, iPhone 6s в переднем кармане брюк, 50 Гц.
+
+    CoreMotion делит ускорение на гравитацию и ускорение пользователя, оба в g,
+    и знак у него противоположный Android: лежащий экраном вверх iPhone даёт
+    гравитацию (0, 0, −1). Отсюда перевод в соглашение Android:
+    `acc = −(gravity + userAcceleration) · g`. Гироскоп — те же правые оси
+    в рад/с, перевода не требует. Магнитометра в этой части датасета нет.
+    """
+    archive = _download(MOTIONSENSE_URL, root / "A_DeviceMotion_data.zip")
+    if archive is None:
+        return None
+
+    collector = _WindowCollector(with_mag=False)
+    with zipfile.ZipFile(archive) as z:
+        names = sorted(
+            n for n in z.namelist()
+            if n.endswith(".csv") and "__MACOSX" not in n and "/sub_" in n
+        )
+        for name in names:
+            folder, file = name.split("/")[-2:]
+            act = folder.split("_")[0]
+            label = MOTIONSENSE_ACTIVITY_MAP.get(act)
+            if label is None:
+                continue
+            subject = file.removeprefix("sub_").removesuffix(".csv")
+            df = pd.read_csv(io.BytesIO(z.read(name)))
+            gravity = df[["gravity.x", "gravity.y", "gravity.z"]].to_numpy(np.float32)
+            user = df[["userAcceleration.x", "userAcceleration.y", "userAcceleration.z"]].to_numpy(np.float32)
+            gyro = df[["rotationRate.x", "rotationRate.y", "rotationRate.z"]].to_numpy(np.float32)
+            acc = -(gravity + user) * G
+            sl = slice(MOTIONSENSE_TRIM, len(df) - MOTIONSENSE_TRIM)
+            collector.add(acc[sl], gyro[sl], None, label, "POCKET", f"ms{subject}", "ms:pocket")
+
+    ds = collector.build()
+    if ds is not None:
+        print(f"  MotionSense: {len(ds)} окон")
+    return ds
+
+
+# --------------------------------------------------------------------------
+# Shoaib et al. (Университет Твенте, 2014)
+# --------------------------------------------------------------------------
+
+SHOAIB_URL = (
+    "https://www.utwente.nl/en/eemcs/ps/dataset-folder/"
+    "sensors-activity-recognition-dataset-shoaib.rar"
+)
+
+# Порядок блоков в строке CSV (не тот, что в readme): 14 колонок на позицию —
+# время, Ax..Az, Lx..Lz (линейное), Gx..Gz, Mx..Mz, пустая.
+SHOAIB_POSITIONS = ["left_pocket", "right_pocket", "wrist", "upper_arm", "belt"]
+SHOAIB_LABEL_COLUMN = 69
+
+SHOAIB_PLACEMENT_MAP = {
+    "left_pocket": "POCKET",
+    "right_pocket": "POCKET",
+    # Запястье, плечо и пояс не соответствуют ни одному положению приложения,
+    # но для модели активности это полезное разнообразие мест на теле.
+}
+
+SHOAIB_ACTIVITY_MAP = {
+    "walking": "WALKING",
+    # В статье «бег», но по readme это трусца — для приложения это бег.
+    "jogging": "RUNNING",
+    "sitting": "STILL",
+    "standing": "STILL",
+    "biking": "CYCLING",
+    "upstairs": "STAIRS_UP",
+    "upsatirs": "STAIRS_UP",  # опечатка в файле участника 8
+    "downstairs": "STAIRS_DOWN",
+}
+
+# Гироскоп в карманах изредка упирается в предел шкалы ±10 рад/с,
+# магнитометр рядом с металлом показывает до 280 мкТл. Обрезаем до
+# правдоподобного диапазона, чтобы единичные выбросы не портили нормировку.
+SHOAIB_GYRO_LIMIT = 10.0
+SHOAIB_MAG_LIMIT = 100.0
+
+
+def _extract_rar(archive: Path, target: Path) -> bool:
+    """Распаковывает RAR внешним 7-Zip: в стандартной библиотеке Python RAR нет."""
+    import shutil
+    import subprocess
+
+    candidates = [shutil.which("7z"), shutil.which("7za"),
+                  r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"]
+    exe = next((c for c in candidates if c and Path(c).exists()), None)
+    if exe is None:
+        return False
+    target.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run([exe, "x", "-y", f"-o{target}", str(archive)],
+                            capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def load_shoaib(root: Path) -> Dataset | None:
+    """Загружает датасет Shoaib et al.: 10 человек, 5 мест на теле, 50 Гц, Galaxy S II.
+
+    Значения — сырые события датчиков Android: ускорение в м/с² с гравитацией,
+    гироскоп в рад/с, поле в мкТл, перевод осей не нужен. Все пять позиций
+    записаны одновременно, строка к строке. Активности идут блоками по 9000
+    строк; окна режутся внутри непрерывного отрезка одной метки.
+    Телефон в карманах висел верхом вниз, на поясе — горизонтально.
+    """
+    data_dir = root / "DataSet"
+    files = sorted(data_dir.glob("Participant_*.csv"))
+    if not files:
+        archive = _download(SHOAIB_URL, root / "shoaib.rar")
+        if archive is None:
+            return None
+        if not _extract_rar(archive, root):
+            print(f"  Не удалось распаковать {archive}: нужен 7-Zip. "
+                  f"Распакуйте архив вручную так, чтобы файлы лежали в {data_dir}")
+            return None
+        files = sorted(data_dir.glob("Participant_*.csv"))
+
+    collector = _WindowCollector(with_mag=True)
+    for path in files:
+        subject = path.stem.split("_")[-1]
+        df = pd.read_csv(path, skiprows=2, header=None, encoding="latin-1", low_memory=False)
+        labels = df[SHOAIB_LABEL_COLUMN].astype(str).str.strip().str.lower().to_numpy()
+        # Границы непрерывных отрезков одной метки.
+        bounds = np.flatnonzero(labels[1:] != labels[:-1]) + 1
+        starts = np.concatenate([[0], bounds])
+        ends = np.concatenate([bounds, [len(labels)]])
+        for k, position in enumerate(SHOAIB_POSITIONS):
+            b = 14 * k
+            block = df.iloc[:, b + 1:b + 13].to_numpy(np.float32)
+            acc = block[:, 0:3]
+            gyro = np.clip(block[:, 6:9], -SHOAIB_GYRO_LIMIT, SHOAIB_GYRO_LIMIT)
+            mag = np.clip(block[:, 9:12], -SHOAIB_MAG_LIMIT, SHOAIB_MAG_LIMIT)
+            placement = SHOAIB_PLACEMENT_MAP.get(position, "UNKNOWN")
+            for s, e in zip(starts, ends):
+                label = SHOAIB_ACTIVITY_MAP.get(labels[s])
+                if label is None:
+                    continue
+                collector.add(acc[s:e], gyro[s:e], mag[s:e], label, placement,
+                              f"sh{subject}", f"sh:{position}")
+        print(f"  Shoaib, участник {subject}: всего окон {len(collector.windows)}")
+
+    return collector.build()
+
+
+# --------------------------------------------------------------------------
+# ExtraSensory (UC San Diego, 2017)
+# --------------------------------------------------------------------------
+
+EXTRASENSORY_BASE = "http://extrasensory.ucsd.edu/data/"
+EXTRASENSORY_LABELS_URL = EXTRASENSORY_BASE + "primary_data_files/ExtraSensory.per_uuid_features_labels.zip"
+EXTRASENSORY_FOLDS_URL = EXTRASENSORY_BASE + "cv5Folds.zip"
+EXTRASENSORY_RAW = {
+    "acc": (EXTRASENSORY_BASE + "raw_measurements/ExtraSensory.raw_measurements.raw_acc.zip", "m_raw_acc"),
+    "gyro": (EXTRASENSORY_BASE + "raw_measurements/ExtraSensory.raw_measurements.proc_gyro.zip", "m_proc_gyro"),
+}
+
+# Метка → класс приложения. Транспорт и лифт в выборку не идут вовсе.
+EXTRASENSORY_ACTIVITY_MAP = {
+    "label:FIX_walking": "WALKING",
+    "label:FIX_running": "RUNNING",
+    "label:STAIRS_-_GOING_UP": "STAIRS_UP",
+    "label:STAIRS_-_GOING_DOWN": "STAIRS_DOWN",
+    "label:BICYCLING": "CYCLING",
+    "label:SITTING": "STILL",
+    "label:LYING_DOWN": "STILL",
+    "label:OR_standing": "STILL",
+}
+EXTRASENSORY_EXCLUDE = ["label:IN_A_CAR", "label:ON_A_BUS", "label:ELEVATOR", "label:DRIVE_-_I_M_THE_DRIVER",
+                        "label:DRIVE_-_I_M_A_PASSENGER"]
+EXTRASENSORY_PLACEMENT_MAP = {
+    "label:PHONE_IN_POCKET": "POCKET",
+    "label:PHONE_IN_HAND": "IN_HAND",
+    "label:PHONE_ON_TABLE": "ON_TABLE",
+    # PHONE_IN_BAG не соответствует ни одному положению приложения.
+}
+# Метки «у уха» в датасете нет. Есть признак состояния телефона «идёт разговор»;
+# вместе с закрытым датчиком приближения это и есть телефон у уха.
+EXTRASENSORY_ON_PHONE = "discrete:on_the_phone:is_True"
+
+# Сколько минут одного сочетания (активность, положение) брать у одного человека.
+EXTRASENSORY_MAX_MINUTES = 15
+EXTRASENSORY_WORKERS = 16
+
+
+def _zip_index(url: str, cache: Path) -> dict[str, tuple[int, int, int]]:
+    """Оглавление удалённого zip: имя → (смещение заголовка, сжатый размер, метод).
+
+    Архивы ExtraSensory весят 6–10 ГБ, а нужна малая часть файлов. Оглавление
+    читается один раз через HTTP Range и кэшируется; дальше каждый файл
+    достаётся отдельным запросом.
+    """
+    import pickle
+
+    if cache.exists():
+        return pickle.loads(cache.read_bytes())
+    import requests
+
+    class _HttpFile(io.RawIOBase):
+        def __init__(self):
+            self.size = int(requests.head(url, timeout=60).headers["Content-Length"])
+            self.pos = 0
+
+        def seekable(self): return True
+        def readable(self): return True
+        def tell(self): return self.pos
+
+        def seek(self, offset, whence=0):
+            self.pos = offset if whence == 0 else self.pos + offset if whence == 1 else self.size + offset
+            return self.pos
+
+        def readinto(self, b):
+            if self.pos >= self.size or len(b) == 0:
+                return 0
+            end = min(self.pos + len(b), self.size) - 1
+            data = requests.get(url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=600).content
+            b[:len(data)] = data
+            self.pos += len(data)
+            return len(data)
+
+    with zipfile.ZipFile(io.BufferedReader(_HttpFile(), buffer_size=1 << 22)) as z:
+        index = {i.filename: (i.header_offset, i.compress_size, i.compress_type) for i in z.infolist()}
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(pickle.dumps(index))
+    return index
+
+
+def _zip_member(url: str, entry: tuple[int, int, int]) -> bytes:
+    """Достаёт один файл из удалённого zip одним Range-запросом."""
+    import struct
+    import zlib
+
+    import requests
+
+    offset, size, method = entry
+    # Локальный заголовок — 30 байт плюс имя и extra; с запасом на их длину.
+    raw = requests.get(url, headers={"Range": f"bytes={offset}-{offset + 30 + 1024 + size}"},
+                       timeout=600).content
+    name_len, extra_len = struct.unpack("<HH", raw[26:30])
+    start = 30 + name_len + extra_len
+    data = raw[start:start + size]
+    if method == zipfile.ZIP_STORED:
+        return data
+    return zlib.decompressobj(-15).decompress(data)
+
+
+def _read_es_dat(raw: bytes) -> np.ndarray | None:
+    """Файл минуты: строки «время x y z» через пробел. None — пусто или nan."""
+    try:
+        arr = np.loadtxt(io.StringIO(raw.decode("ascii", "ignore")), dtype=np.float64, ndmin=2)
+    except ValueError:
+        return None
+    if arr.shape[1] < 4 or len(arr) < 10:
+        return None
+    arr = arr[np.all(np.isfinite(arr), axis=1)]
+    if len(arr) < 10:
+        return None
+    return arr[np.argsort(arr[:, 0], kind="stable")]
+
+
+def _es_platforms(root: Path) -> dict[str, str]:
+    """UUID → 'android' | 'iphone' по спискам из cv5Folds.zip."""
+    archive = _download(EXTRASENSORY_FOLDS_URL, root / "cv5Folds.zip")
+    out: dict[str, str] = {}
+    if archive is None:
+        return out
+    with zipfile.ZipFile(archive) as z:
+        for name in z.namelist():
+            for platform in ("android", "iphone"):
+                if name.endswith(f"_{platform}_uuids.txt"):
+                    for line in z.read(name).decode().split():
+                        out[line.strip()] = platform
+    return out
+
+
+def _es_select_minutes(df: pd.DataFrame, android: bool, max_minutes: int, rng) -> list[tuple]:
+    """Выбирает минуты с однозначной активностью: (время, активность, положение, лк, близко)."""
+    act_cols = [c for c in EXTRASENSORY_ACTIVITY_MAP if c in df.columns]
+    acts = df[act_cols].fillna(0).to_numpy() == 1
+    # Сидя, стоя и лёжа — всё «покой»: несколько таких меток не противоречат друг другу.
+    classes = np.array([EXTRASENSORY_ACTIVITY_MAP[c] for c in act_cols])
+    excluded = np.zeros(len(df), dtype=bool)
+    for c in EXTRASENSORY_EXCLUDE:
+        if c in df.columns:
+            excluded |= df[c].fillna(0).to_numpy() == 1
+
+    on_phone = (df[EXTRASENSORY_ON_PHONE].fillna(0).to_numpy() == 1
+                if EXTRASENSORY_ON_PHONE in df.columns else np.zeros(len(df), dtype=bool))
+    light = df.get("lf_measurements:light")
+    prox = df.get("lf_measurements:proximity_cm")
+
+    chosen: dict[tuple[str, str], list[tuple]] = {}
+    for i in range(len(df)):
+        if excluded[i]:
+            continue
+        labels = set(classes[acts[i]])
+        if len(labels) != 1:
+            continue
+        activity = labels.pop()
+
+        lux = -1.0
+        near = None
+        if android:
+            # У Android свет записан в логарифме: lux = exp(v).
+            if light is not None and np.isfinite(light.iloc[i]):
+                lux = float(np.exp(light.iloc[i]))
+            # Приближение — 0 (закрыт) или 8 см (максимум, открыт).
+            if prox is not None and np.isfinite(prox.iloc[i]):
+                near = bool(prox.iloc[i] < 4)
+
+        placement = "UNKNOWN"
+        for col, cls in EXTRASENSORY_PLACEMENT_MAP.items():
+            if col in df.columns and df[col].iloc[i] == 1:
+                placement = cls
+                break
+        # Разговор при закрытом датчике — телефон у уха. У iPhone датчик
+        # приближения в датасете неинформативен, поэтому только Android.
+        if on_phone[i] and near is True and placement != "ON_TABLE":
+            placement = "AT_EAR"
+
+        chosen.setdefault((activity, placement), []).append(
+            (int(df["timestamp"].iloc[i]), activity, placement, lux, near)
+        )
+
+    out = []
+    for items in chosen.values():
+        if len(items) > max_minutes:
+            items = [items[j] for j in rng.choice(len(items), max_minutes, replace=False)]
+        out.extend(items)
+    return out
+
+
+def _es_window_ok(acc: np.ndarray, activity: str, placement: str) -> bool:
+    """Отсев шумной разметки по самому сигналу.
+
+    Метки ставились самими людьми раз в минуту и часто не совпадают с тем,
+    что происходило: «ходьба в кармане» с идеально неподвижным телефоном,
+    «на столе» с трясущимся. Такие окна учат модель неправде.
+    """
+    sd = float(np.linalg.norm(acc, axis=1).std())
+    if activity in ("WALKING", "RUNNING", "STAIRS_UP", "STAIRS_DOWN", "CYCLING") and sd < 0.5:
+        return False
+    if activity == "STILL" and sd > 1.5:
+        return False
+    if placement == "ON_TABLE" and sd > 0.2:
+        return False
+    return True
+
+
+def load_extrasensory(root: Path, max_minutes: int = EXTRASENSORY_MAX_MINUTES,
+                      max_users: int | None = None, seed: int = 42) -> Dataset | None:
+    """Загружает ExtraSensory: 60 человек в обычной жизни, iPhone и Android.
+
+    Ценность — в разметке положения телефона (карман, рука, стол) и в том, что
+    люди записаны не в лаборатории. У Android-участников есть свет и
+    приближение (по одному значению на минуту); они подставляются в окно,
+    и из «разговор + датчик закрыт» получаются примеры положения у уха.
+
+    Перевод в соглашение Android: iPhone пишет ускорение в g с обратным знаком
+    (лёжа экраном вверх z = −1), поэтому acc = −9.80665 · a; гироскоп у обеих
+    платформ в рад/с с одинаковыми осями. Частоты разные (Android 50 Гц,
+    iPhone 34–40 Гц с неровным шагом), поэтому каждая минута приводится
+    к 50 Гц линейной интерполяцией по собственным меткам времени файла.
+    Магнитометр не берётся: у iPhone он с огромным смещением.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    root.mkdir(parents=True, exist_ok=True)
+    labels_zip = _download(EXTRASENSORY_LABELS_URL, root / "features_labels.zip")
+    if labels_zip is None:
+        return None
+    platforms = _es_platforms(root)
+    print("  читаем оглавление архивов сырых данных (один раз, дальше из кэша) …")
+    indexes = {k: _zip_index(url, root / f"index_{k}.pkl") for k, (url, _) in EXTRASENSORY_RAW.items()}
+
+    rng = np.random.default_rng(seed)
+    collector = _WindowCollector(with_mag=False)
+
+    def fetch(kind: str, uuid: str, ts: int) -> bytes | None:
+        url, suffix = EXTRASENSORY_RAW[kind]
+        cached = root / kind / uuid / f"{ts}.dat"
+        if cached.exists():
+            return cached.read_bytes()
+        entry = None
+        for prefix in (f"{uuid}/{ts}.{suffix}.dat", f"{suffix.removeprefix('m_')}/{uuid}/{ts}.{suffix}.dat"):
+            entry = indexes[kind].get(prefix)
+            if entry:
+                break
+        if entry is None:
+            return None
+        try:
+            data = _zip_member(url, entry)
+        except Exception:  # noqa: BLE001
+            return None
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(data)
+        return data
+
+    with zipfile.ZipFile(labels_zip) as z:
+        members = sorted(n for n in z.namelist() if n.endswith(".features_labels.csv.gz"))
+        if max_users:
+            members = members[:max_users]
+        for member in members:
+            uuid = Path(member).name.split(".")[0]
+            android = platforms.get(uuid) == "android"
+            df = pd.read_csv(io.BytesIO(z.read(member)), compression="gzip")
+            minutes = _es_select_minutes(df, android, max_minutes, rng)
+            if not minutes:
+                continue
+
+            with ThreadPoolExecutor(EXTRASENSORY_WORKERS) as pool:
+                accs = list(pool.map(lambda m: fetch("acc", uuid, m[0]), minutes))
+                gyros = list(pool.map(lambda m: fetch("gyro", uuid, m[0]), minutes))
+
+            before = len(collector.windows)
+            for (ts, activity, placement, lux, near), raw_acc, raw_gyro in zip(minutes, accs, gyros):
+                if raw_acc is None or raw_gyro is None:
+                    continue
+                a = _read_es_dat(raw_acc)
+                g = _read_es_dat(raw_gyro)
+                if a is None or g is None:
+                    continue
+                start, end = max(a[0, 0], g[0, 0]), min(a[-1, 0], g[-1, 0])
+                if end - start < WINDOW_SIZE / SAMPLE_RATE_HZ:
+                    continue
+                grid = np.arange(start, end, 1.0 / SAMPLE_RATE_HZ)
+                acc = np.stack([np.interp(grid, a[:, 0], a[:, k]) for k in (1, 2, 3)], axis=1)
+                gyro = np.stack([np.interp(grid, g[:, 0], g[:, k]) for k in (1, 2, 3)], axis=1)
+                if not android:
+                    acc = -G * acc
+                acc, gyro = acc.astype(np.float32), gyro.astype(np.float32)
+                if not _es_window_ok(acc, activity, placement):
+                    continue
+                n_before = len(collector.windows)
+                collector.add(acc, gyro, None, activity, placement, f"es{uuid[:8]}",
+                              f"es:{placement.lower()}")
+                # Свет и приближение известны по минуте — подставляем во все окна минуты.
+                for w in collector.windows[n_before:]:
+                    w["light_lux"][:] = lux
+                    if near is not None:
+                        w["proximity_cm"][:] = 0.0 if near else 8.0
+                        w["proximity_near"][:] = near
+            print(f"  ExtraSensory {uuid[:8]} ({'Android' if android else 'iPhone'}): "
+                  f"{len(minutes)} мин -> {len(collector.windows) - before} окон")
+
+    return collector.build()
+
+
+# --------------------------------------------------------------------------
 # Собственные записи из приложения
 # --------------------------------------------------------------------------
 
@@ -594,6 +1156,38 @@ def load_own(directory: Path, parts: int = OWN_SEGMENTS) -> Dataset | None:
 # --------------------------------------------------------------------------
 # Объединение источников
 # --------------------------------------------------------------------------
+
+def cap_per_subject_activity(ds: Dataset, cap: int, seed: int = 42) -> Dataset:
+    """Оставляет не больше [cap] окон на пару (испытуемый, активность).
+
+    RealWorld даёт сотни тысяч почти одинаковых окон покоя: модели они почти
+    ничего не добавляют, а память при обучении съедают гигабайтами. Отбор
+    случайный внутри пары, поэтому разнообразие людей и мест на теле
+    сохраняется, а перекос в сторону самого многословного источника уходит.
+    """
+    if cap <= 0:
+        return ds
+    rng = np.random.default_rng(seed)
+    keep = []
+    pairs = np.char.add(np.char.add(ds.subjects.astype(str), "|"), ds.y_activity.astype(str))
+    for pair in np.unique(pairs):
+        idx = np.flatnonzero(pairs == pair)
+        if len(idx) > cap:
+            idx = rng.choice(idx, cap, replace=False)
+        keep.append(idx)
+    keep = np.sort(np.concatenate(keep))
+    if len(keep) == len(ds):
+        return ds
+    return Dataset(
+        x=ds.x[keep],
+        context=ds.context[keep],
+        y_activity=ds.y_activity[keep],
+        y_placement=None if ds.y_placement is None else ds.y_placement[keep],
+        subjects=ds.subjects[keep],
+        channels=ds.channels,
+        groups=None if ds.groups is None else ds.groups[keep],
+    )
+
 
 def merge(datasets: list[Dataset]) -> Dataset:
     """Склеивает наборы, оставляя каналы, которые есть во всех источниках.

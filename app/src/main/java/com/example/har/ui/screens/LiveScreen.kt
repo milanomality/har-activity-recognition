@@ -23,9 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.har.google.GoogleActivityTracker
 import com.example.har.ml.ActivityType
 import com.example.har.ml.MotionFusion
 import com.example.har.ml.PlacementConditioning
+import com.example.har.ml.PlacementFusion
 import com.example.har.motion.InertialSpeedEstimator
 import com.example.har.ml.PhonePlacement
 import com.example.har.ui.HarViewModel
@@ -197,6 +199,11 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                         StatRow("Спектральная энтропия", formatFloat(s.spectralEntropy))
                         StatRow("Среднее вращение", "${formatFloat(s.gyroMagMean)} рад/с")
                         StatRow("Наклон телефона", "${formatFloat(s.tiltDeg, 0)}°")
+                        StatRow(
+                            "Тяжесть по осям X / Y",
+                            "${formatFloat(s.gravityXRatio, 2)} / ${formatFloat(s.gravityYRatio, 2)}",
+                        )
+                        StatRow("Поза «у уха»", "${formatFloat(PlacementFusion.earPose(s) * 100f, 0)} %")
                         StatRow("Стабильность ориентации", formatFloat(s.orientationStd, 4))
                         StatRow(
                             "Скорость (инерц. навигация)",
@@ -265,6 +272,47 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                             StatRow("Поле искажено", "${formatFloat(s.magDisturbedRatio * 100f, 0)} % окна")
                             StatRow("Компас против гироскопа", "${formatFloat(s.magGyroMismatchDeg, 0)}°")
                         }
+                    }
+                }
+            }
+
+            item {
+                SectionCard("Сверка с Google") {
+                    val google by GoogleActivityTracker.latest.collectAsStateWithLifecycle()
+                    val googleError by GoogleActivityTracker.error.collectAsStateWithLifecycle()
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val g = r.google
+                        val last = google
+                        when {
+                            googleError != null -> StatRow("Google", googleError ?: "")
+                            g != null -> {
+                                StatRow("Google думает", "${g.type.title} · ${g.confidence} %")
+                                StatRow(
+                                    "Совпадает с нашим",
+                                    when (g.type.agreesWith(r.prediction.activity)) {
+                                        true -> "да"
+                                        false -> "нет"
+                                        null -> "не с чем сравнить"
+                                    },
+                                )
+                            }
+                            last != null -> StatRow("Google", "ответ устарел (${last.type.title})")
+                            else -> StatRow("Google", "ждём первый ответ")
+                        }
+                        if (state.googleCompared > 0) {
+                            StatRow(
+                                "Совпадений за сессию",
+                                "${formatFloat(state.googleAgreed * 100f / state.googleCompared, 0)} % " +
+                                    "из ${state.googleCompared} окон",
+                            )
+                        }
+                        Text(
+                            "Google Activity Recognition не знает положения телефона и не различает " +
+                                "лестницу — она сравнивается с его «ходьбой». Ответы приходят раз в " +
+                                "5–30 с и в наше решение не входят: это только эталон для сверки.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

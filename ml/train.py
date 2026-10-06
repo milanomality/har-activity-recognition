@@ -17,6 +17,11 @@
     python ml/train.py --source uci
     python ml/train.py --source own --own-dir ml/data/own
     python ml/train.py --source both --epochs 60
+    python ml/train.py --source uci,realworld,motionsense,shoaib,extrasensory,own
+    python ml/train.py --source all
+
+Источники: uci, realworld, motionsense, shoaib, extrasensory, own; можно
+перечислить через запятую. both = uci+own, all = все шесть.
 """
 
 from __future__ import annotations
@@ -509,10 +514,9 @@ def train_placement(sources: list[datasets.Dataset], args) -> tuple[bytes, dict]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--source", choices=["uci", "own", "realworld", "both", "all"],
-                        default="uci",
-                        help="источник данных: uci | own | realworld | "
-                             "both (uci+own) | all (uci+realworld+own)")
+    parser.add_argument("--source", default="uci",
+                        help="источники через запятую: uci, realworld, motionsense, shoaib, "
+                             "extrasensory, own; both = uci+own; all = все")
     parser.add_argument("--uci-dir", type=Path, default=REPO_ROOT / "ml" / "data",
                         help="куда скачивать и где искать UCI HAR")
     parser.add_argument("--own-dir", type=Path, default=REPO_ROOT / "ml" / "data" / "own",
@@ -520,6 +524,23 @@ def main() -> None:
     parser.add_argument("--realworld-dir", type=Path,
                         default=REPO_ROOT / "ml" / "data" / "realworld",
                         help="кэш датасета RealWorld HAR")
+    parser.add_argument("--motionsense-dir", type=Path,
+                        default=REPO_ROOT / "ml" / "data" / "motionsense",
+                        help="кэш датасета MotionSense (около 70 МБ)")
+    parser.add_argument("--shoaib-dir", type=Path,
+                        default=REPO_ROOT / "ml" / "data" / "shoaib",
+                        help="кэш датасета Shoaib et al. (около 100 МБ, нужен 7-Zip)")
+    parser.add_argument("--extrasensory-dir", type=Path,
+                        default=REPO_ROOT / "ml" / "data" / "extrasensory",
+                        help="кэш датасета ExtraSensory")
+    parser.add_argument("--extrasensory-max-minutes", type=int,
+                        default=datasets.EXTRASENSORY_MAX_MINUTES,
+                        help="минут одного сочетания (активность, положение) у одного человека")
+    parser.add_argument("--extrasensory-users", type=int, default=None,
+                        help="сколько участников ExtraSensory брать (по умолчанию все 60)")
+    parser.add_argument("--max-windows-per-subject-activity", type=int, default=3000,
+                        help="потолок окон на пару (человек, активность) в каждом источнике; "
+                             "0 — без ограничения. Нужен ради памяти: RealWorld даёт сотни тысяч окон")
     parser.add_argument("--realworld-subjects", type=int, default=datasets.REALWORLD_SUBJECTS,
                         help="сколько испытуемых RealWorld загружать (1..15)")
     parser.add_argument("--epochs", type=int, default=40)
@@ -546,31 +567,68 @@ def main() -> None:
     except ImportError:
         raise SystemExit("Не установлен TensorFlow: pip install -r ml/requirements.txt")
 
+    aliases = {
+        "both": ["uci", "own"],
+        "all": ["uci", "realworld", "motionsense", "shoaib", "extrasensory", "own"],
+    }
+    known = set(aliases["all"])
+    wanted: list[str] = []
+    for item in args.source.split(","):
+        item = item.strip().lower()
+        for name in aliases.get(item, [item]):
+            if name not in known:
+                raise SystemExit(f"Неизвестный источник: {name}. Допустимо: {', '.join(sorted(known))}, both, all")
+            if name not in wanted:
+                wanted.append(name)
+    only = wanted[0] if len(wanted) == 1 else None
+
     sources: list[datasets.Dataset] = []
 
-    if args.source in ("uci", "both", "all"):
+    if "uci" in wanted:
         print("\nЗагрузка UCI HAR …")
         uci = datasets.load_uci(args.uci_dir)
         print(uci.summary())
         sources.append(uci)
 
-    if args.source in ("realworld", "all"):
+    if "realworld" in wanted:
         print(f"\nЗагрузка RealWorld HAR в {args.realworld_dir} …")
         print("  первый запуск качает около 1.5 ГБ, дальше берётся из кэша")
         realworld = datasets.load_realworld(args.realworld_dir, args.realworld_subjects)
         if realworld is None:
-            if args.source == "realworld":
+            if only == "realworld":
                 raise SystemExit("Не удалось загрузить ни одной записи RealWorld HAR")
             print("  RealWorld недоступен, пропускаем")
         else:
             print(realworld.summary())
             sources.append(realworld)
 
-    if args.source in ("own", "both", "all"):
+    public = [
+        ("motionsense", "MotionSense",
+         lambda: datasets.load_motionsense(args.motionsense_dir)),
+        ("shoaib", "Shoaib et al.",
+         lambda: datasets.load_shoaib(args.shoaib_dir)),
+        ("extrasensory", "ExtraSensory",
+         lambda: datasets.load_extrasensory(args.extrasensory_dir, args.extrasensory_max_minutes,
+                                            args.extrasensory_users, args.seed)),
+    ]
+    for key, title, load in public:
+        if key not in wanted:
+            continue
+        print(f"\nЗагрузка {title} …")
+        ds = load()
+        if ds is None:
+            if only == key:
+                raise SystemExit(f"Не удалось загрузить {title}")
+            print(f"  {title} недоступен, пропускаем")
+        else:
+            print(ds.summary())
+            sources.append(ds)
+
+    if "own" in wanted:
         print(f"\nЗагрузка собственных записей из {args.own_dir} …")
         own = datasets.load_own(args.own_dir)
         if own is None:
-            if args.source == "own":
+            if only == "own":
                 raise SystemExit(
                     f"В {args.own_dir} нет пригодных CSV. Запишите данные "
                     "во вкладке «Сбор данных» и выгрузите файлы на компьютер."
@@ -579,6 +637,16 @@ def main() -> None:
         else:
             print(own.summary())
             sources.append(own)
+
+    if args.max_windows_per_subject_activity > 0:
+        for i, ds in enumerate(sources):
+            before = len(ds)
+            sources[i] = datasets.cap_per_subject_activity(ds, args.max_windows_per_subject_activity, args.seed)
+            if len(sources[i]) < before:
+                print(f"Источник {i + 1}: {before} -> {len(sources[i])} окон "
+                      f"(не больше {args.max_windows_per_subject_activity} на человека и активность)")
+        import gc
+        gc.collect()
 
     data = datasets.merge(sources)
     if len(sources) > 1:

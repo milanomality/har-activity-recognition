@@ -76,6 +76,32 @@ data class ActivityWindowEntity(
     @ColumnInfo(name = "mag_disturbed_ratio", defaultValue = "0") val magDisturbedRatio: Float = 0f,
     /** Расхождение поворота по компасу и гироскопу, градусы (с версии БД 3). */
     @ColumnInfo(name = "mag_gyro_mismatch_deg", defaultValue = "0") val magGyroMismatchDeg: Float = 0f,
+
+    // --- Разбор решения о положении (с версии БД 4) ---
+    /** Доля силы тяжести по оси X телефона, −1…1 (с версии БД 4). */
+    @ColumnInfo(name = "grav_x", defaultValue = "0") val gravityX: Float = 0f,
+    /** Доля силы тяжести по оси Y телефона, −1…1; +1 — верх телефона вверху (с версии БД 4). */
+    @ColumnInfo(name = "grav_y", defaultValue = "0") val gravityY: Float = 0f,
+    /** Доля силы тяжести по оси Z телефона, −1…1; +1 — экраном вверх (с версии БД 4). */
+    @ColumnInfo(name = "grav_z", defaultValue = "0") val gravityZ: Float = 0f,
+    /** СКО направления гравитации — устойчивость ориентации (с версии БД 4). */
+    @ColumnInfo(name = "orientation_std", defaultValue = "0") val orientationStd: Float = 0f,
+    /** Похожесть позы на разговор у уха, 0–1 (с версии БД 4). */
+    @ColumnInfo(name = "ear_pose", defaultValue = "0") val earPose: Float = 0f,
+    /** Сглаженные вероятности положения, JSON-массив в порядке PhonePlacement (с версии БД 4). */
+    @ColumnInfo(name = "placement_probabilities", defaultValue = "''") val placementProbabilities: String = "",
+    /** Выход модели положения до поправок, JSON-массив (с версии БД 4). */
+    @ColumnInfo(name = "model_placement_probabilities", defaultValue = "''") val modelPlacementProbabilities: String = "",
+    /** Выход модели активности до поправок, JSON-массив (с версии БД 4). */
+    @ColumnInfo(name = "model_activity_probabilities", defaultValue = "''") val modelActivityProbabilities: String = "",
+
+    // --- Сверка с Google Activity Recognition (с версии БД 5) ---
+    /** Класс по Google (имя GoogleActivityType); пусто — свежего ответа не было (с версии БД 5). */
+    @ColumnInfo(name = "google_activity", defaultValue = "''") val googleActivity: String = "",
+    /** Уверенность Google, 0–100; −1 — ответа не было (с версии БД 5). */
+    @ColumnInfo(name = "google_confidence", defaultValue = "-1") val googleConfidence: Int = -1,
+    /** Совпадение с Google: 1 — да, 0 — нет, −1 — сравнивать не с чем (с версии БД 5). */
+    @ColumnInfo(name = "google_agrees", defaultValue = "-1") val googleAgrees: Int = -1,
 )
 
 /**

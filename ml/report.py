@@ -345,7 +345,7 @@ def table(header: list[str], rows: list[list[str]]) -> str:
 
 
 def load_data(source: str) -> D.Dataset:
-    want = source.split("+") if source != "all" else ["own", "uci", "rw"]
+    want = source.split("+") if source != "all" else ["own", "uci", "rw", "ms", "sh", "es"]
     parts = []
     if "own" in want:
         own = D.load_own(DATA_DIR / "own")
@@ -357,6 +357,18 @@ def load_data(source: str) -> D.Dataset:
         rw = D.load_realworld(DATA_DIR / "realworld")
         if rw:
             parts.append(rw)
+    if "ms" in want:
+        ms = D.load_motionsense(DATA_DIR / "motionsense")
+        if ms:
+            parts.append(ms)
+    if "sh" in want:
+        sh = D.load_shoaib(DATA_DIR / "shoaib")
+        if sh:
+            parts.append(sh)
+    if "es" in want:
+        es = D.load_extrasensory(DATA_DIR / "extrasensory")
+        if es:
+            parts.append(es)
     if not parts:
         raise SystemExit("Не удалось загрузить ни один источник")
     return D.merge(parts)

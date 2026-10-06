@@ -71,15 +71,17 @@ class MainActivity : ComponentActivity() {
      * Разрешение на уведомления нужно не ради самих уведомлений: без него
      * на Android 13+ нельзя показать уведомление переднего сервиса, а без
      * него система не даст сервису работать при погашенном экране.
+     * «Физическая активность» нужна только для сверки с Google Activity
+     * Recognition API. Отказ ни в одном из них не блокирует распознавание.
      */
-    private val notificationPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* отказ не блокирует работу, просто сокращает время фоновой работы */ }
+    private val permissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* отказ не блокирует работу */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        requestNotificationPermissionIfNeeded()
+        requestPermissionsIfNeeded()
 
         setContent {
             ActivityRecognizerTheme {
@@ -93,13 +95,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    private fun requestPermissionsIfNeeded() {
+        val wanted = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+        val missing = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) permissions.launch(missing.toTypedArray())
     }
 }
 

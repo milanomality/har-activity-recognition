@@ -39,6 +39,12 @@ data class WindowStats(
     val tiltDeg: Float,
     /** Стабильность ориентации: СКО направления гравитации. Низкая — телефон лежит. */
     val orientationStd: Float,
+    /** Доля силы тяжести вдоль оси X телефона (поперёк экрана), −1…1. */
+    val gravityXRatio: Float = 0f,
+    /** Доля силы тяжести вдоль оси Y телефона (вдоль экрана), −1…1: +1 — верх телефона вверху. */
+    val gravityYRatio: Float = 0f,
+    /** Доля силы тяжести вдоль оси Z телефона (из экрана), −1…1: +1 — экраном вверх. */
+    val gravityZRatio: Float = 0f,
     /** Частота переходов сигнала через среднее — грубая оценка ритмичности. */
     val zeroCrossingRate: Float,
     /** Средняя горизонтальная скорость за окно по инерциальной навигации, м/с. */
@@ -306,6 +312,9 @@ object FeatureExtractor {
             spectralEntropy = entropy,
             tiltDeg = Math.toDegrees(tiltRad.toDouble()).toFloat(),
             orientationStd = gravityDirectionStd(window),
+            gravityXRatio = if (gNorm > 1e-3f) gxm / gNorm else 0f,
+            gravityYRatio = if (gNorm > 1e-3f) gym / gNorm else 0f,
+            gravityZRatio = if (gNorm > 1e-3f) gzm / gNorm else 0f,
             zeroCrossingRate = crossings.toFloat() / n,
             speedMs = mean(window.speed),
             secondsSinceZupt = window.secondsSinceZupt[n - 1],
