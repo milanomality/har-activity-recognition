@@ -184,11 +184,13 @@ class ActivityRecognizer(context: Context) : Closeable {
                     window, m.channels, m.channelMean, m.channelStd,
                 )
                 val raw = if (m.usesContext) {
-                    // Второй вход — те же 16 признаков, что и у классификатора
-                    // положения. Через него в решение об активности попадают
-                    // освещённость, приближение и ориентация телефона.
+                    // Второй вход — признаки положения, отобранные по именам
+                    // из метаданных: ориентация телефона и статистики движения.
+                    // Свет и приближение сюда не входят — они говорят, где
+                    // телефон, а не что делает человек.
+                    val all = FeatureExtractor.placementFeatures(window)
                     val context = standardise(
-                        FeatureExtractor.placementFeatures(window),
+                        FloatArray(m.contextIndices.size) { all[m.contextIndices[it]] },
                         m.contextMean,
                         m.contextStd,
                     )

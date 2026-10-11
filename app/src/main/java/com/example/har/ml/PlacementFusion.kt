@@ -26,6 +26,12 @@ import kotlin.math.abs
  *    от телефона на столе не отличить. Отличает дрожь: стол неподвижен
  *    до тысячных долей рад/с, рука даже в покое даёт 0.03–0.06 рад/с
  *    и градус-другой колебаний наклона.
+ * 4. **И стол — это плашмя.** Правило 3 работает и в обратную сторону:
+ *    телефон, который лежит строго горизонтально и не дрожит, никто не держит.
+ *    На записях с устройства телефон на столе давал |g_z| ≈ 1.00 и 0.001 рад/с,
+ *    а неподвижный в руке — |g_z| не выше 0.82 (экран повёрнут к лицу)
+ *    и от 0.008 рад/с. Переход идёт только из «в руке»: экраном вниз на столе
+ *    телефон тёмный и закрыт, как в кармане сидящего, и там поза не различает.
  */
 object PlacementFusion {
 
@@ -72,6 +78,9 @@ object PlacementFusion {
         return topUp * screenUpright * diagonal * steady
     }
 
+    /** Телефон лежит горизонтально, экраном вверх или вниз, 0–1. */
+    fun flat(s: WindowStats): Float = ((abs(s.gravityZRatio) - 0.9f) / 0.07f).coerceIn(0f, 1f)
+
     /** Телефон перевёрнут верхом вниз — так его к уху не подносят, 0–1. */
     private fun upsideDown(s: WindowStats): Float = ((-s.gravityYRatio - 0.3f) / 0.3f).coerceIn(0f, 1f)
 
@@ -93,6 +102,7 @@ object PlacementFusion {
         move(PhonePlacement.POCKET, notInPocket(stats))
         proximityOpen(stats)?.let { move(PhonePlacement.AT_EAR, it) }
         move(PhonePlacement.ON_TABLE, tremor(stats))
+        move(PhonePlacement.IN_HAND, flat(stats) * (1f - tremor(stats)), PhonePlacement.ON_TABLE)
         return out
     }
 }

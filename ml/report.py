@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import datasets as D  # noqa: E402
 import features as F  # noqa: E402
+import train as T  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "ml" / "data"
@@ -282,12 +283,15 @@ def predict(x: np.ndarray, context: np.ndarray, channels: list[str], meta: dict,
     order = [ci[c] for c in meta["channels"]]
 
     motion = (x[:, :, order] - np.array(meta["channel_mean"])) / np.array(meta["channel_std"])
-    use_ctx = "activity_context_mean" in meta
+    use_ctx = bool(meta.get("activity_context_mean"))
     ctx = None
     if use_ctx:
         cm = np.array(meta["activity_context_mean"])
         cs = np.array(meta["activity_context_std"])
-        ctx = (context - cm) / np.where(cs > 1e-6, cs, 1.0)
+        # Как в приложении: признаки контекста выбираются по именам из meta.
+        names = meta.get("activity_context_features", F.PLACEMENT_FEATURE_NAMES)
+        ctx = context[:, [F.PLACEMENT_FEATURE_NAMES.index(n) for n in names]]
+        ctx = (ctx - cm) / np.where(cs > 1e-6, cs, 1.0)
 
     it = tf.lite.Interpreter(model_path=str(path))
     ins = it.get_input_details()
@@ -344,34 +348,32 @@ def table(header: list[str], rows: list[list[str]]) -> str:
     return "\n".join(out)
 
 
+REPORT_SOURCES = {"own": "own", "uci": "uci", "rw": "realworld", "ms": "motionsense",
+                  "sh": "shoaib", "es": "extrasensory"}
+
+# Параметры train.py по умолчанию: те же кэш, потолки окон и деление по людям,
+# иначе отчёт описывал бы не ту выборку, на которой обучена модель.
+TRAIN_ARGS = T.build_parser().parse_args([])
+
+
 def load_data(source: str) -> D.Dataset:
-    want = source.split("+") if source != "all" else ["own", "uci", "rw", "ms", "sh", "es"]
-    parts = []
-    if "own" in want:
+    want = source.split("+") if source != "all" else list(REPORT_SOURCES)
+    wanted = [REPORT_SOURCES[w] for w in want]
+    parts = T.load_public(wanted, TRAIN_ARGS)
+    if "own" in wanted:
         own = D.load_own(DATA_DIR / "own")
         if own:
             parts.append(own)
-    if "uci" in want:
-        parts.append(D.load_uci(DATA_DIR))
-    if "rw" in want:
-        rw = D.load_realworld(DATA_DIR / "realworld")
-        if rw:
-            parts.append(rw)
-    if "ms" in want:
-        ms = D.load_motionsense(DATA_DIR / "motionsense")
-        if ms:
-            parts.append(ms)
-    if "sh" in want:
-        sh = D.load_shoaib(DATA_DIR / "shoaib")
-        if sh:
-            parts.append(sh)
-    if "es" in want:
-        es = D.load_extrasensory(DATA_DIR / "extrasensory")
-        if es:
-            parts.append(es)
     if not parts:
         raise SystemExit("Не удалось загрузить ни один источник")
     return D.merge(parts)
+
+
+def test_indices(ds: D.Dataset) -> np.ndarray:
+    """Отложенные испытуемые — ровно те, что train.py отдаёт в тест."""
+    groups = ds.groups if ds.groups is not None else np.full(len(ds), "unknown")
+    is_own = np.char.startswith(groups.astype(str), "own:")
+    return T._split(ds.subjects, is_own, TRAIN_ARGS)[2]
 
 
 # --------------------------------------------------------------------------
@@ -479,9 +481,10 @@ def section_trace(ds: D.Dataset, stats: dict, spec: np.ndarray, hz: np.ndarray,
                    "grav_dir_std", "acc_mag_mean_norm", "lin_acc_rms",
                    "gyro_mag_mean", "gyro_mag_std"]
     lines += [
-        f"**Шаг 4. Контекстные признаки.** {len(names)} агрегированных величин — "
-        "второй вход модели. Через него в решение попадают датчики приближения "
-        "и освещённости, которых нет среди каналов движения. Часть признаков окна:",
+        f"**Шаг 4. Признаки положения.** {len(names)} агрегированных величин — "
+        "вход модели положения телефона. Через них в решение попадают датчики "
+        "приближения и освещённости; модель активности их не видит, чтобы не "
+        "связывать «темно в кармане» с конкретной активностью. Часть признаков окна:",
         "",
         table(["Признак", "Значение"],
               [[f"`{nm}`", fmt(ctx[names.index(nm)], 3)] for nm in interesting]),
@@ -492,9 +495,10 @@ def section_trace(ds: D.Dataset, stats: dict, spec: np.ndarray, hz: np.ndarray,
         p = probs[i]
         rows = sorted(zip(meta["activity_labels"], p), key=lambda t: -t[1])
         lines += [
-            "**Шаг 5. Выход модели.** Оба входа нормируются статистиками обучающей "
-            "выборки, свёрточная ветка обрабатывает каналы движения, полносвязная — "
-            "контекст, после чего ветки объединяются:",
+            "**Шаг 5. Выход модели.** Сеть дополняет оси акселерометра и гироскопа "
+            "величинами, не зависящими от поворота телефона (модуль, вертикальная "
+            "и горизонтальная составляющие ускорения, вращение вокруг вертикали), "
+            "нормирует их и прогоняет через остаточную свёрточную сеть:",
             "",
             table(["Класс", "Вероятность"],
                   [[CLASS_RU.get(c, c), fmt(v, 3)] for c, v in rows]),
@@ -732,7 +736,7 @@ def section_confusion(ds: D.Dataset, meta: dict, probs: np.ndarray) -> str:
     """Матрица ошибок на отложенных испытуемых."""
     labels = meta["activity_labels"]
     try:
-        _, _, test = D.split_by_subject(ds)
+        test = test_indices(ds)
     except Exception as e:  # деление может не выйти на малой выборке
         print(f"  деление по испытуемым не удалось: {e}", file=sys.stderr)
         return ""
@@ -775,21 +779,20 @@ def section_confusion(ds: D.Dataset, meta: dict, probs: np.ndarray) -> str:
                 f"«{CLASS_RU.get(top, top)}». Причина видна в таблицах выше — "
                 "у этих двух классов совпадает темп шага, а амплитуды перекрываются, "
                 "потому что зависят от человека и от того, где лежит телефон, "
-                "сильнее, чем от самой активности. Надёжно разделить их можно только "
-                "признаком, которого в наборе нет, — например барометром: подъём "
-                "и спуск меняют высоту, а ходьба по ровному нет."
+                "сильнее, чем от самой активности. Различает их форма шага: при "
+                "подъёме тело на каждом шаге толкается вверх, при спуске стопа бьёт "
+                "о ступень. Поэтому сеть получает вертикальную составляющую "
+                "ускорения отдельным каналом — она не зависит от того, как повёрнут телефон."
             )
     return (
         f"Доли в процентах по строкам, на отложенных испытуемых "
         f"({thousands(len(test))} окон). Эти люди не участвовали в обучении, "
         "поэтому цифра отражает работу на новом человеке, а не запоминание "
         f"выборки. Точность на этой выборке — **{100 * acc_all:.1f} %**.\n\n"
-        "Цифра зависит от того, какие источники загружены. На всех трёх она "
-        "совпадает с результатом, который печатает `ml/train.py`, — это и есть "
-        "проверка того, что отчёт считает ту же модель на той же выборке. "
-        "Если запустить без RealWorld, останутся почти только записи с поясным "
-        "креплением из UCI HAR: они заметно чище и однороднее, и точность "
-        "выходит завышенной, около 99 %.\n\n"
+        "Деление на обучение и тест — то же, что в `ml/train.py`, поэтому цифра "
+        "совпадает с той, что печатает обучение. Собственные записи в этот тест "
+        "не входят: все они идут в обучение, а проверяются отдельно и строже — "
+        "`ml/crossval.py` обучает модель без целого дня записей и смотрит на него.\n\n"
         + table(["Истина → предсказание", "Окон"] + [CLASS_RU[c] for c in cols], rows)
         + extra
     )
@@ -806,7 +809,9 @@ def section_model(meta: dict | None) -> str:
         return "_`model_meta.json` не найден — раздел не построен._"
     return (
         f"Модель положения телефона: **{fmt(100 * meta.get('placement_accuracy', 0), 1)} %** "
-        f"на {len(meta.get('placement_labels', []))} классах. Обучающая выборка — "
+        "на отложенных испытуемых — у публичных датасетов это только «в кармане» "
+        "и «у уха»; «в руке» и «на столе» есть лишь в собственных записях и "
+        "проверяются по дням (`ml/crossval.py`). Обучающая выборка — "
         f"{thousands(meta.get('train_windows', 0))} окон.\n\n"
         f"Модель активности выдаёт {len(meta.get('activity_labels', []))} "
         f"{plural(len(meta.get('activity_labels', [])), 'класс', 'класса', 'классов')} "
@@ -814,9 +819,10 @@ def section_model(meta: dict | None) -> str:
         f"{len(meta.get('channels', []))} "
         f"{plural(len(meta.get('channels', [])), 'канал', 'канала', 'каналов')} движения "
         f"({', '.join(meta.get('channels', []))}). Транспорт исключён из "
-        "классов: приложение распознаёт активность самого человека. Магнитометр в сеть тоже "
-        "не подаётся: при склейке источников остаётся пересечение каналов, "
-        "а в UCI HAR магнитометра нет."
+        "классов: приложение распознаёт активность самого человека. Магнитометр в сеть "
+        "не подаётся: рядом с металлом поле искажается сильнее, чем меняется от движения. "
+        "Свет и приближение модель активности тоже не видит — они определяют положение "
+        "телефона, а положение уже потом ограничивает активность (`PlacementConditioning`)."
     )
 
 

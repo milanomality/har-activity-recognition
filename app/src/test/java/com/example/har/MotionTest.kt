@@ -211,6 +211,29 @@ class MotionTest {
     }
 
     @Test
+    fun `неподвижный телефон плашмя — на столе, а не в руке`() {
+        val model = placement(PhonePlacement.IN_HAND)
+        // Данные с устройства: на столе |g_z| = 1.00 и 0.001 рад/с.
+        val onTable = stats(accStd = 0.01f, gyro = 0.001f, steps = 0, cadence = 0f, regularity = 0f, tiltSwing = 0.05f)
+            .copy(gravityZRatio = 0.999f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, onTable)[PhonePlacement.ON_TABLE.id], 1e-4f)
+
+        // В руке экран повёрнут к лицу: |g_z| ≈ 0.63, а при самой спокойной руке
+        // дрожь почти не видна — решает наклон.
+        val held = onTable.copy(gravityZRatio = 0.63f, gyroMagMean = 0.008f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, held)[PhonePlacement.IN_HAND.id], 1e-4f)
+
+        // Плашмя, но дрожит — держат в руке над столом.
+        val shaky = onTable.copy(gyroMagMean = 0.05f, tiltSwingDeg = 1.5f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(model, shaky)[PhonePlacement.IN_HAND.id], 1e-4f)
+
+        // Карман сидящего (плашмя, темно, закрыт) правило не трогает.
+        val pocket = placement(PhonePlacement.POCKET)
+        val sitting = onTable.copy(lightLuxMean = 0f, proximityNearRatio = 1f)
+        assertEquals(1f, com.example.har.ml.PlacementFusion.apply(pocket, sitting)[PhonePlacement.POCKET.id], 1e-4f)
+    }
+
+    @Test
     fun `мах рукой — не велосипед`() {
         // Окно с устройства: вращение 1.4 рад/с, размах наклона 60°, «шаги» с темпом 0.8 Гц.
         val s = stats(accStd = 2.7f, gyro = 1.4f, steps = 2, cadence = 0.79f, regularity = 0.26f, tiltSwing = 60f)

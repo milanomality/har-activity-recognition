@@ -21,6 +21,11 @@ data class ModelMeta(
     val activityLabels: List<ActivityType>,
     val channelMean: FloatArray,
     val channelStd: FloatArray,
+    /**
+     * Имена признаков контекстного входа — подмножество
+     * [FeatureExtractor.PLACEMENT_FEATURE_NAMES] в порядке входа модели.
+     */
+    val contextFeatures: List<String>,
     /** Статистики нормировки контекстного входа. Пусты у одновходовой модели. */
     val contextMean: FloatArray,
     val contextStd: FloatArray,
@@ -33,10 +38,15 @@ data class ModelMeta(
     val placementAccuracy: Float,
 ) {
     /**
-     * Принимает ли модель активности второй вход — контекстные признаки,
-     * через которые в решение попадают освещённость и приближение.
+     * Принимает ли модель активности второй вход — контекстные признаки
+     * окна: ориентацию телефона и статистики движения.
      */
     val usesContext: Boolean get() = contextMean.isNotEmpty()
+
+    /** Позиции признаков контекста в векторе признаков положения. */
+    val contextIndices: IntArray by lazy {
+        IntArray(contextFeatures.size) { FeatureExtractor.PLACEMENT_FEATURE_NAMES.indexOf(contextFeatures[it]) }
+    }
     /**
      * Проверка, что модель обучалась на той же геометрии данных, что подаёт
      * приложение. Молча работать с несовпадающим окном — верный способ
@@ -53,9 +63,12 @@ data class ModelMeta(
         placementMean.size != FeatureExtractor.PLACEMENT_FEATURE_COUNT ->
             "модель положения ждёт ${placementMean.size} признаков, " +
                 "приложение считает ${FeatureExtractor.PLACEMENT_FEATURE_COUNT}"
-        usesContext && contextMean.size != FeatureExtractor.PLACEMENT_FEATURE_COUNT ->
+        usesContext && contextFeatures.any { it !in FeatureExtractor.PLACEMENT_FEATURE_NAMES } ->
+            "неизвестные признаки контекста: " +
+                contextFeatures.filter { it !in FeatureExtractor.PLACEMENT_FEATURE_NAMES }.joinToString(", ")
+        usesContext && contextMean.size != contextFeatures.size ->
             "контекстный вход ждёт ${contextMean.size} признаков, " +
-                "приложение считает ${FeatureExtractor.PLACEMENT_FEATURE_COUNT}"
+                "в метаданных названо ${contextFeatures.size}"
         usesContext && contextStd.size != contextMean.size ->
             "число статистик контекста не совпадает: " +
                 "${contextMean.size} средних против ${contextStd.size} СКО"
@@ -97,6 +110,10 @@ data class ModelMeta(
                 channelStd = o.getJSONArray("channel_std").toFloatArray(),
                 // Секции контекста может не быть: модели, обученные более
                 // ранней версией скрипта, одновходовые и остаются рабочими.
+                // Без списка имён контекст — все признаки положения: так
+                // обучались модели до отделения света и приближения.
+                contextFeatures = o.optJSONArray("activity_context_features")?.toStringList()
+                    ?: FeatureExtractor.PLACEMENT_FEATURE_NAMES,
                 contextMean = o.optJSONArray("activity_context_mean").toFloatArrayOrEmpty(),
                 contextStd = o.optJSONArray("activity_context_std").toFloatArrayOrEmpty(),
                 placementLabels = placementLabels,

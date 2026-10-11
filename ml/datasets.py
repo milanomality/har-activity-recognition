@@ -314,11 +314,20 @@ def _resample_hold(times: np.ndarray, values: np.ndarray, grid: np.ndarray) -> n
     return values[idx]
 
 
+_realworld_unreachable = False
+
+
 def _download_realworld_part(root: Path, subject: int, sensor: str, activity: str) -> Path | None:
     """Скачивает и распаковывает один архив, если его ещё нет в кэше."""
+    global _realworld_unreachable
     target = root / f"s{subject}" / f"{sensor}_{activity}"
     if target.is_dir() and any(target.glob("*.csv")):
         return target
+    # Если сервер уже не отдал архив ни с одной попытки, остальные
+    # недостающие части в этом запуске не запрашиваем: каждая стоила бы
+    # минут ожидания, а обучение пойдёт на том, что уже скачано.
+    if _realworld_unreachable:
+        return None
 
     import requests
 
@@ -329,13 +338,16 @@ def _download_realworld_part(root: Path, subject: int, sensor: str, activity: st
     response = None
     for attempt in range(1, REALWORLD_RETRIES + 1):
         try:
-            response = requests.get(url, timeout=600)
+            response = requests.get(url, timeout=(30, 120))
             response.raise_for_status()
             break
         except Exception as exc:  # noqa: BLE001
             if attempt == REALWORLD_RETRIES:
                 print(f"    не скачан {sensor}_{activity} s{subject} "
                       f"({REALWORLD_RETRIES} попыт.): {exc}")
+                print("    сервер RealWorld недоступен — остальные недостающие "
+                      "архивы в этом запуске пропускаются")
+                _realworld_unreachable = True
                 return None
             time.sleep(2 * attempt)
     if response is None:
@@ -555,6 +567,13 @@ class _WindowCollector:
         )
 
 
+# Ниже этой средней скорости загрузка прерывается: сервер, отдающий данные
+# по капле, не вызывает тайм-аут requests (тот срабатывает только на полную
+# тишину), и обучение ждало бы сутки вместо того, чтобы обойтись без источника.
+MIN_DOWNLOAD_BYTES_PER_S = 50_000
+SLOW_DOWNLOAD_GRACE_S = 120
+
+
 def _download(url: str, target: Path, retries: int = 3) -> Path | None:
     """Скачивает файл в target, если его там ещё нет. Повторяет при сбое сети."""
     if target.exists() and target.stat().st_size > 0:
@@ -564,12 +583,19 @@ def _download(url: str, target: Path, retries: int = 3) -> Path | None:
     target.parent.mkdir(parents=True, exist_ok=True)
     for attempt in range(1, retries + 1):
         try:
-            with requests.get(url, stream=True, timeout=600) as r:
+            with requests.get(url, stream=True, timeout=(30, 120)) as r:
                 r.raise_for_status()
                 tmp = target.with_suffix(target.suffix + ".part")
+                started, done = time.monotonic(), 0
                 with open(tmp, "wb") as f:
-                    for chunk in r.iter_content(1 << 20):
+                    # Мелкие порции: чтение порции ждёт, пока она наберётся
+                    # целиком, и при мегабайте проверка скорости запаздывала бы на часы.
+                    for chunk in r.iter_content(1 << 14):
                         f.write(chunk)
+                        done += len(chunk)
+                        elapsed = time.monotonic() - started
+                        if elapsed > SLOW_DOWNLOAD_GRACE_S and done / elapsed < MIN_DOWNLOAD_BYTES_PER_S:
+                            raise IOError(f"слишком медленно: {done / elapsed / 1000:.1f} КБ/с")
                 tmp.replace(target)
             return target
         except Exception as exc:  # noqa: BLE001
@@ -690,12 +716,18 @@ def _extract_rar(archive: Path, target: Path) -> bool:
     candidates = [shutil.which("7z"), shutil.which("7za"),
                   r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"]
     exe = next((c for c in candidates if c and Path(c).exists()), None)
-    if exe is None:
-        return False
     target.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run([exe, "x", "-y", f"-o{target}", str(archive)],
-                            capture_output=True, text=True)
-    return result.returncode == 0
+    if exe is not None:
+        result = subprocess.run([exe, "x", "-y", f"-o{target}", str(archive)],
+                                capture_output=True, text=True)
+        return result.returncode == 0
+    # Без 7-Zip: tar из Windows 10+ — это bsdtar на libarchive, он читает RAR.
+    bsdtar = Path(r"C:\Windows\System32\tar.exe")
+    if bsdtar.exists():
+        result = subprocess.run([str(bsdtar), "-xf", str(archive), "-C", str(target)],
+                                capture_output=True, text=True)
+        return result.returncode == 0
+    return False
 
 
 def load_shoaib(root: Path) -> Dataset | None:
@@ -1053,7 +1085,26 @@ def load_extrasensory(root: Path, max_minutes: int = EXTRASENSORY_MAX_MINUTES,
 # Собственные записи из приложения
 # --------------------------------------------------------------------------
 
-def load_own(directory: Path, parts: int = OWN_SEGMENTS) -> Dataset | None:
+def own_session(name: str) -> str:
+    """Исходная запись, из которой вырезан файл: без суффикса куска _p3, _w1, _c2.
+
+    Куски одной записи сняты подряд одним человеком на одном телефоне —
+    при проверке они должны оставаться по одну сторону от деления.
+    """
+    stem = Path(name).stem
+    head, _, tail = stem.rpartition("_")
+    return head if head and tail[:1] in ("p", "w", "c") and tail[1:].isdigit() else stem
+
+
+def own_day(name: str) -> str:
+    """День записи YYYYMMDD — из имени вида har_<активность>_<положение>_<день>_<время>."""
+    parts = own_session(name).split("_")
+    return parts[-2] if len(parts) >= 2 else ""
+
+
+def load_own(directory: Path, parts: int = OWN_SEGMENTS,
+             exclude_days: set[str] | None = None,
+             only_days: set[str] | None = None) -> Dataset | None:
     """Читает CSV-файлы, записанные режимом «Сбор данных».
 
     Каждый файл — одна непрерывная запись с постоянной разметкой.
@@ -1070,6 +1121,12 @@ def load_own(directory: Path, parts: int = OWN_SEGMENTS) -> Dataset | None:
     if not directory.is_dir():
         return None
     files = sorted(directory.glob("*.csv"))
+    # Отбор по дням нужен для честной проверки: модель, обученная без записей
+    # одного дня, проверяется именно на них.
+    if exclude_days:
+        files = [f for f in files if own_day(f.name) not in exclude_days]
+    if only_days:
+        files = [f for f in files if own_day(f.name) in only_days]
     if not files:
         return None
 
@@ -1151,6 +1208,41 @@ def load_own(directory: Path, parts: int = OWN_SEGMENTS) -> Dataset | None:
     # по датчикам, которых нет среди каналов движения.
     ds.raw_windows = windows  # type: ignore[attr-defined]
     return ds
+
+
+# --------------------------------------------------------------------------
+# Кэш загруженных источников
+# --------------------------------------------------------------------------
+
+def save_cache(ds: Dataset, path: Path) -> None:
+    """Сохраняет нарезанный источник в .npz.
+
+    Разбор RealWorld (3.5 ГБ CSV) и сборка ExtraSensory из тысяч минутных
+    файлов занимают десятки минут; при серии обучений — например, проверке
+    по дням — это время уходило бы на каждый запуск.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.stem + ".tmp.npz")
+    np.savez(
+        tmp, x=ds.x, context=ds.context, y_activity=ds.y_activity,
+        y_placement=ds.y_placement if ds.y_placement is not None else np.array([]),
+        has_placement=np.array(ds.y_placement is not None),
+        subjects=ds.subjects, channels=np.array(ds.channels),
+        groups=ds.groups if ds.groups is not None else np.array([]),
+    )
+    tmp.replace(path)
+
+
+def load_cache(path: Path) -> Dataset | None:
+    if not path.exists():
+        return None
+    z = np.load(path, allow_pickle=False)
+    return Dataset(
+        x=z["x"], context=z["context"], y_activity=z["y_activity"],
+        y_placement=z["y_placement"] if bool(z["has_placement"]) else None,
+        subjects=z["subjects"], channels=[str(c) for c in z["channels"]],
+        groups=z["groups"] if z["groups"].size else None,
+    )
 
 
 # --------------------------------------------------------------------------
