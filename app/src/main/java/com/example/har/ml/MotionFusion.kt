@@ -28,7 +28,14 @@ import com.example.har.features.WindowStats
  * велосипеду 0.999. Поэтому, если телефон почти неподвижен и шагов нет,
  * итоговое распределение смешивается с «покоем» с весом, равным степени
  * неподвижности: при полной неподвижности модель не может утверждать движение.
- * Тот же приём — для движения телефона рукой без шагов.
+ *
+ * **Обратный запрет.** Покой — это почти неподвижный телефон: в руке на него
+ * влияет только дрожь (0.03–0.06 рад/с, СКО ускорения около 0.1 м/с²).
+ * Если телефон движется сильнее (СКО ускорения от 1.2 м/с² или вращение
+ * от 1.2 рад/с), покой физически невозможен — множитель [IMPOSSIBLE].
+ * Раньше движение рукой без признанных шагов, наоборот, подмешивало покой,
+ * и медленный подъём по лестнице с телефоном в руке (темп 1.3 шага/с, ниже
+ * порога шагов) превращался в «покой» при правильном ответе модели.
  */
 object MotionFusion {
 
@@ -37,8 +44,8 @@ object MotionFusion {
     /** Ниже этого темпа «шаги» — не ходьба, а мах рукой или случайные толчки, Гц. */
     private const val MIN_GAIT_CADENCE_HZ = 1.2f
 
-    /** Доля покоя, гарантированная при движении телефона рукой без шагов. */
-    private const val GESTURE_OVERRIDE = 0.85f
+    /** Множитель для покоя, когда телефон движется заметно сильнее дрожи. */
+    const val IMPOSSIBLE = 0.02f
 
     /** Промежуточные оценки — показываются на экране, чтобы решение было объяснимо. */
     data class Factors(
@@ -56,6 +63,8 @@ object MotionFusion {
         val stillness: Float = 0f,
         /** С каким весом итог смешивается с «покоем» (физический запрет), 0–1. */
         val stillOverride: Float = 0f,
+        /** Телефон движется сильнее, чем дрожит рука: покой невозможен, 0–1. */
+        val tooMuchMotionForStill: Float = 0f,
     )
 
     fun factors(s: WindowStats, placementProbabilities: FloatArray?): Factors {
@@ -73,9 +82,12 @@ object MotionFusion {
         // Неподвижность считается по модулям и от навигации не зависит:
         // 1 при СКО ускорения до 0.2 м/с² и вращении до 0.3 рад/с, 0 — от 0.6 и 0.7.
         val stillness = gate(0.6f - s.accMagStd, 0.4f) * gate(0.7f - s.gyroMagMean, 0.4f)
+        // Обратное: движение сильнее дрожи. 0 там, где ещё возможна неподвижность,
+        // 1 от СКО ускорения 1.2 м/с² или вращения 1.2 рад/с.
+        val tooMuchMotionForStill = maxOf(gate(s.accMagStd - 0.6f, 0.6f), gate(s.gyroMagMean - 0.7f, 0.5f))
 
         if (!s.motionComputed) {
-            return Factors(0f, handHeld, 0f, 0f, 0f, stillness, stillness)
+            return Factors(0f, handHeld, 0f, 0f, 0f, stillness, stillness, tooMuchMotionForStill)
         }
 
         // Шаговый ритм: хотя бы два шага в окне, повторяющийся рисунок вертикали
@@ -104,12 +116,13 @@ object MotionFusion {
         val tooSlowForRunning = if (s.cadenceHz > 0f) gate(2.4f - s.cadenceHz, 0.4f) else 0f
         val tooFastForWalking = if (s.cadenceHz > 0f) gate(s.cadenceHz - 2.4f, 0.4f) else 0f
 
-        // Физический запрет: неподвижность без шагов или жест рукой без шагов.
-        val stillOverride = maxOf(stillness * (1f - gait), GESTURE_OVERRIDE * handGesture)
+        // Физический запрет: неподвижность без шагов. Жест рукой покоем не считается:
+        // покой — это почти неподвижный телефон, а не любое движение без шагов.
+        val stillOverride = stillness * (1f - gait)
 
         return Factors(
             gait, handHeld, handGesture, tooSlowForRunning, tooFastForWalking,
-            stillness, stillOverride,
+            stillness, stillOverride, tooMuchMotionForStill,
         )
     }
 
@@ -137,7 +150,9 @@ object MotionFusion {
         // вращение около 1 Гц, как у бедра с телефоном в кармане.
         penalty[ActivityType.CYCLING.id] = maxOf(f.handGesture, f.handHeld)
 
-        return FloatArray(ActivityType.COUNT) { 1f - (1f - FLOOR) * penalty[it].coerceIn(0f, 1f) }
+        val out = FloatArray(ActivityType.COUNT) { 1f - (1f - FLOOR) * penalty[it].coerceIn(0f, 1f) }
+        out[ActivityType.STILL.id] *= 1f - (1f - IMPOSSIBLE) * f.tooMuchMotionForStill
+        return out
     }
 
     fun apply(

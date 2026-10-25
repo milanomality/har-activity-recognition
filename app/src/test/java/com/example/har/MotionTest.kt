@@ -135,20 +135,42 @@ class MotionTest {
     private fun placement(p: PhonePlacement) = FloatArray(PhonePlacement.COUNT).also { it[p.id] = 1f }
 
     @Test
-    fun `жест рукой без шагов ослабляет ходьбу и бег, но не покой`() {
+    fun `сильное движение без шагов — не покой, хотя и не ходьба`() {
         // Телефон в руке, им двигают: большая амплитуда и вращение, шагов нет.
+        // Покой — это почти неподвижный телефон, поэтому он исключается.
         val s = stats(accStd = 3f, gyro = 1.5f, steps = 0, cadence = 0f, regularity = 0.1f)
         val l = MotionFusion.likelihoods(s, placement(PhonePlacement.IN_HAND))
-        assertEquals(1f, l[ActivityType.STILL.id], 1e-4f)
+        assertEquals(MotionFusion.IMPOSSIBLE, l[ActivityType.STILL.id], 1e-4f)
         assertEquals(MotionFusion.FLOOR, l[ActivityType.WALKING.id], 1e-4f)
         assertEquals(MotionFusion.FLOOR, l[ActivityType.RUNNING.id], 1e-4f)
+        assertEquals(0f, MotionFusion.factors(s, placement(PhonePlacement.IN_HAND)).stillOverride, 1e-4f)
+    }
 
-        // Та же модель выбрала бы бег — после поправки побеждает покой.
+    @Test
+    fun `покой в руке — только дрожь, и он не запрещается`() {
+        // Телефон держат неподвижно: дрожь 0.05 рад/с, СКО ускорения 0.1 м/с².
+        val s = stats(accStd = 0.1f, gyro = 0.05f, steps = 0, cadence = 0f, regularity = 0f)
+        val f = MotionFusion.factors(s, placement(PhonePlacement.IN_HAND))
+        assertEquals(0f, f.tooMuchMotionForStill, 1e-4f)
+        assertEquals(1f, MotionFusion.likelihoods(s, placement(PhonePlacement.IN_HAND))[ActivityType.STILL.id], 1e-4f)
+        assertTrue(f.stillOverride > 0.9f)
+    }
+
+    @Test
+    fun `медленный подъём по лестнице в руке остаётся подъёмом`() {
+        // Окно с устройства 11.10: темп 1.27 шага/с (ниже порога шагов), СКО 3.0 м/с²,
+        // вращение 1.95 рад/с, размах наклона 26°. Модель: подъём 0.97.
+        val s = stats(
+            accStd = 3.03f, gyro = 1.95f, steps = 4, cadence = 1.27f, regularity = 0.71f,
+            tiltSwing = 26.3f, vertical = 3.14f, horizontal = 3.94f,
+        )
         val model = FloatArray(ActivityType.COUNT).also {
-            it[ActivityType.RUNNING.id] = 0.5f; it[ActivityType.STILL.id] = 0.3f; it[ActivityType.WALKING.id] = 0.2f
+            it[ActivityType.STAIRS_UP.id] = 0.97f; it[ActivityType.STILL.id] = 0.01f
+            it[ActivityType.STAIRS_DOWN.id] = 0.02f
         }
         val fused = MotionFusion.apply(model, s, placement(PhonePlacement.IN_HAND))
-        assertEquals(ActivityType.STILL.id, fused.indices.maxByOrNull { fused[it] })
+        assertEquals(ActivityType.STAIRS_UP.id, fused.indices.maxByOrNull { fused[it] })
+        assertTrue("покой ${fused[ActivityType.STILL.id]}", fused[ActivityType.STILL.id] < 0.01f)
     }
 
     @Test
@@ -174,7 +196,8 @@ class MotionTest {
     fun `шаги исключают покой`() {
         val s = stats(accStd = 2.5f, gyro = 1f, steps = 4, cadence = 1.8f, regularity = 0.8f)
         val l = MotionFusion.likelihoods(s, placement(PhonePlacement.POCKET))
-        assertEquals(MotionFusion.FLOOR, l[ActivityType.STILL.id], 1e-4f)
+        // Покой ослаблен дважды: за шаговый ритм и за движение сильнее дрожи.
+        assertEquals(MotionFusion.FLOOR * MotionFusion.IMPOSSIBLE, l[ActivityType.STILL.id], 1e-4f)
         assertEquals(1f, l[ActivityType.WALKING.id], 1e-4f)
     }
 
@@ -242,9 +265,19 @@ class MotionTest {
         }
         val f = MotionFusion.factors(s, placement(PhonePlacement.IN_HAND))
         assertEquals("редкие толчки — не шаговый ритм", 0f, f.gait, 1e-4f)
-        val fused = MotionFusion.apply(model, s, placement(PhonePlacement.IN_HAND))
-        assertEquals(ActivityType.STILL.id, fused.indices.maxByOrNull { fused[it] })
-        assertTrue("велосипед ${fused[ActivityType.CYCLING.id]}", fused[ActivityType.CYCLING.id] < 0.15f)
+        // Велосипед ослабляют и сам MotionFusion (телефон в руке), и совместимость
+        // с положением; покоем мах при этом не становится — телефон движется.
+        val l = MotionFusion.likelihoods(s, placement(PhonePlacement.IN_HAND))
+        assertEquals(MotionFusion.FLOOR, l[ActivityType.CYCLING.id], 1e-4f)
+        assertEquals(MotionFusion.IMPOSSIBLE, l[ActivityType.STILL.id], 1e-4f)
+        val withWalking = FloatArray(ActivityType.COUNT).also {
+            it[ActivityType.CYCLING.id] = 0.7f; it[ActivityType.WALKING.id] = 0.2f; it[ActivityType.STILL.id] = 0.1f
+        }
+        val fused = MotionFusion.apply(
+            com.example.har.ml.PlacementConditioning.apply(withWalking, placement(PhonePlacement.IN_HAND)),
+            s, placement(PhonePlacement.IN_HAND),
+        )
+        assertTrue("велосипед ${fused[ActivityType.CYCLING.id]}", fused[ActivityType.CYCLING.id] < fused[ActivityType.WALKING.id])
     }
 
     @Test
@@ -308,11 +341,8 @@ class MotionTest {
         )
         val f = MotionFusion.factors(s, placement(PhonePlacement.IN_HAND))
         assertTrue("шаговый ритм ${f.gait}", f.gait < 0.05f)
-        val model = FloatArray(ActivityType.COUNT).also {
-            it[ActivityType.STAIRS_UP.id] = 0.95f; it[ActivityType.STILL.id] = 0.05f
-        }
-        val fused = MotionFusion.apply(model, s, placement(PhonePlacement.IN_HAND))
-        assertEquals(ActivityType.STILL.id, fused.indices.maxByOrNull { fused[it] })
+        // Шагами это не засчитывается, но и покоем не становится: телефон движется.
+        assertEquals(MotionFusion.IMPOSSIBLE, MotionFusion.likelihoods(s, placement(PhonePlacement.IN_HAND))[ActivityType.STILL.id], 1e-4f)
     }
 
     @Test

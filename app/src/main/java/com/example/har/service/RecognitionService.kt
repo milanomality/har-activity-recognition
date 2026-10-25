@@ -55,11 +55,15 @@ class RecognitionService : LifecycleService() {
 
         when (intent?.action) {
             ACTION_STOP -> {
+                // Остановили вручную (кнопкой или из уведомления): открытие приложения
+                // не должно сразу запускать распознавание снова.
+                AutoStart.setStoppedByUser(this, true)
                 stopRecognition()
                 return START_NOT_STICKY
             }
         }
 
+        AutoStart.setStoppedByUser(this, false)
         startForegroundCompat(buildNotification("Запуск распознавания…", "Накопление первого окна"))
         engine.start(lifecycleScope)
 

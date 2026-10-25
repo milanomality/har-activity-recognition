@@ -10,6 +10,7 @@ import com.example.har.data.db.ActivityIntervalEntity
 import com.example.har.data.db.ActivitySummaryRow
 import com.example.har.ml.ActivityType
 import com.example.har.ml.PhonePlacement
+import com.example.har.service.AutoStart
 import com.example.har.service.RecognitionService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +74,7 @@ class HarViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refreshDatasetFiles()
+        AutoStart.isEnabled(app)
     }
 
     // --- Управление распознаванием ---
@@ -88,6 +90,11 @@ class HarViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRecognition() {
         if (engineState.value.running) stopRecognition() else startRecognition()
     }
+
+    /** Автозапуск при включении телефона и открытии приложения. */
+    val autoStart: StateFlow<Boolean> = AutoStart.enabled
+
+    fun setAutoStart(enabled: Boolean) = AutoStart.setEnabled(getApplication(), enabled)
 
     // --- Журнал ---
 

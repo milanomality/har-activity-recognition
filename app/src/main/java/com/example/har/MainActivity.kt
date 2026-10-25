@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.har.data.CsvExporter
+import com.example.har.service.AutoStart
 import com.example.har.ui.HarViewModel
 import com.example.har.ui.screens.AboutScreen
 import com.example.har.ui.screens.CollectScreen
@@ -82,6 +83,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestPermissionsIfNeeded()
+        // Распознавание включается само: при открытии приложения, если не работает
+        // и его не останавливали вручную (при включении телефона — BootReceiver).
+        AutoStart.onAppOpened(this, (application as HarApplication).engine.state.value.running)
 
         setContent {
             ActivityRecognizerTheme {

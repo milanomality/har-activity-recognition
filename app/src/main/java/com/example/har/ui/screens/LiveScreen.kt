@@ -15,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -112,6 +113,24 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                     text = if (state.running) "  Остановить" else "  Начать распознавание",
                     modifier = Modifier.padding(start = 4.dp),
                 )
+            }
+        }
+
+        item {
+            val autoStart by vm.autoStart.collectAsStateWithLifecycle()
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Запускать автоматически", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "при включении телефона и открытии приложения",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = autoStart, onCheckedChange = vm::setAutoStart)
             }
         }
 
@@ -347,11 +366,13 @@ fun LiveScreen(vm: HarViewModel, modifier: Modifier = Modifier) {
                         StatRow("Темп велик для ходьбы", "${formatFloat(f.tooFastForWalking * 100f, 0)} %")
                         StatRow("Неподвижность телефона", "${formatFloat(f.stillness * 100f, 0)} %")
                         StatRow("Сдвиг к покою (физ. запрет)", "${formatFloat(f.stillOverride * 100f, 0)} %")
+                        StatRow("Движение сильнее дрожи: покой невозможен", "${formatFloat(f.tooMuchMotionForStill * 100f, 0)} %")
                         Text(
                             "Движение рукой без шагов ослабляет ходьбу и бег; шаговый ритм ослабляет " +
                                 "покой; темп разводит ходьбу и бег надёжнее амплитуды, " +
                                 "которую в руке раздувает мах. Если телефон неподвижен и шагов нет, " +
-                                "итог сдвигается к покою, как бы ни была уверена модель.",
+                                "итог сдвигается к покою, как бы ни была уверена модель. А если телефон " +
+                                "движется сильнее, чем дрожит рука, покой исключается.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

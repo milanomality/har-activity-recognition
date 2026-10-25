@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Автозапуск распознавания при включении телефона -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".HarApplication"
@@ -46,6 +48,17 @@
             android:name=".service.RecognitionService"
             android:exported="false"
             android:foregroundServiceType="health" />
+
+        <!-- Автозапуск: включение телефона и обновление приложения.
+             Оба события защищённые — их рассылает только система. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Решения Google Activity Recognition — для сверки с собственным распознаванием -->
         <receiver
