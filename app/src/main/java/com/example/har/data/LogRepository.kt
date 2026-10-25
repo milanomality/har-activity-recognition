@@ -150,6 +150,12 @@ class LogRepository(context: Context) {
 
     fun windowCount(): Flow<Int> = windowDao.countFlow()
 
+    /**
+     * Окно, решение которого действовало в момент [atMs]. null — в это время
+     * журнал не вёлся: окна старше разрыва интервала уже не считаются текущими.
+     */
+    suspend fun windowAt(atMs: Long): ActivityWindowEntity? = windowDao.at(atMs, INTERVAL_GAP_MS)
+
     suspend fun allWindows(): List<ActivityWindowEntity> = windowDao.all()
 
     suspend fun allIntervals(): List<ActivityIntervalEntity> = intervalDao.all()

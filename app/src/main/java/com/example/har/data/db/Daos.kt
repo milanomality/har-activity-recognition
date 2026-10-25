@@ -18,6 +18,13 @@ interface ActivityWindowDao {
     @Query("SELECT * FROM activity_windows WHERE startMs >= :fromMs AND startMs < :toMs ORDER BY startMs ASC")
     suspend fun between(fromMs: Long, toMs: Long): List<ActivityWindowEntity>
 
+    /** Последнее окно, начавшееся не позже [atMs] и не раньше чем за [maxAgeMs] до него. */
+    @Query(
+        "SELECT * FROM activity_windows WHERE startMs <= :atMs AND startMs > :atMs - :maxAgeMs " +
+            "ORDER BY startMs DESC LIMIT 1"
+    )
+    suspend fun at(atMs: Long, maxAgeMs: Long): ActivityWindowEntity?
+
     @Query("SELECT * FROM activity_windows ORDER BY startMs ASC")
     suspend fun all(): List<ActivityWindowEntity>
 

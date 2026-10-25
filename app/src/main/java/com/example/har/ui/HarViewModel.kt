@@ -8,6 +8,7 @@ import com.example.har.data.CsvExporter
 import com.example.har.data.LogRepository
 import com.example.har.data.db.ActivityIntervalEntity
 import com.example.har.data.db.ActivitySummaryRow
+import com.example.har.data.db.ActivityWindowEntity
 import com.example.har.ml.ActivityType
 import com.example.har.ml.PhonePlacement
 import com.example.har.service.AutoStart
@@ -17,7 +18,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,6 +66,24 @@ class HarViewModel(app: Application) : AndroidViewModel(app) {
         .flatMapLatest { repository.summaryForDay(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Момент под ползунком хронологии; null — последний записанный момент дня. */
+    private val _cursorMs = MutableStateFlow<Long?>(null)
+
+    /**
+     * Момент под ползунком с подставленным значением по умолчанию. Пока
+     * пользователь не трогал ползунок, он стоит на конце журнала и во время
+     * записи сам едет вперёд.
+     */
+    val cursorMs: StateFlow<Long?> = combine(_cursorMs, intervals) { cursor, list ->
+        cursor ?: list.maxOfOrNull { it.endMs }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Окно журнала под ползунком — подробности решения в этот момент. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cursorWindow: StateFlow<ActivityWindowEntity?> = cursorMs
+        .mapLatest { t -> t?.let { repository.windowAt(it) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val windowCount: StateFlow<Int> = repository.windowCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
@@ -99,11 +120,17 @@ class HarViewModel(app: Application) : AndroidViewModel(app) {
     // --- Журнал ---
 
     fun shiftDay(days: Int) {
+        _cursorMs.value = null
         _selectedDay.value += days * LogRepository.DAY_MS
     }
 
     fun goToToday() {
+        _cursorMs.value = null
         _selectedDay.value = LogRepository.startOfToday()
+    }
+
+    fun setCursor(atMs: Long) {
+        _cursorMs.value = atMs
     }
 
     fun clearJournal() = viewModelScope.launch {
